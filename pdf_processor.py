@@ -103,32 +103,17 @@ class PDFProcessor:
                 return None
 
     def _convert_word_to_pdf(self, word_path: Path) -> Optional[Path]:
-        """Convert a Word document to PDF locally. Prefer docx2pdf; fallback to LibreOffice.
-
-        Returns path to the generated PDF on success, or None on failure.
-        """
-        try:
-            from docx2pdf import convert  # type: ignore
-        except Exception:
-            convert = None
-
+        """Convert a Word document to PDF locally using LibreOffice."""
         try:
             tmp_dir = Path(tempfile.mkdtemp(prefix="word2pdf_"))
             pdf_out = tmp_dir / f"{word_path.stem}.pdf"
 
-            if convert is not None and word_path.suffix.lower() == ".docx":
-                # docx2pdf only supports .docx reliably
-                try:
-                    convert(str(word_path), str(pdf_out))
-                    if pdf_out.exists() and pdf_out.stat().st_size > 0:
-                        return pdf_out
-                except Exception as e:
-                    print(f"docx2pdf failed for {word_path}: {e}")
-
-            # Fallback to LibreOffice (soffice) headless conversion
-            # Works for both .docx and many .doc (binary) files
+            # Use LibreOffice
             try:
-                soffice_path = os.getenv("SOFFICE_PATH", "soffice")
+                soffice_path = os.getenv(
+                    "SOFFICE_PATH",
+                    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+                )
                 subprocess.run(
                     [
                         soffice_path,
