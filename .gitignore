@@ -205,3 +205,51 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# =============================================================================
+# SENSITIVE DATA PROTECTION - MAINTENANCE MANUALS
+# =============================================================================
+# NEVER commit any maintenance manuals or processed data to version control
+
+# All data directories and files
+data/
+*.pdf
+*.PDF
+*.docx
+*.doc
+*.xlsx
+*.xls
+*.pptx
+*.ppt
+
+# Processed data outputs
+*.json
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.svg
+
+# Temporary files
+temp_*
+*.tmp
+*.temp
+
+# API Keys and Secrets
+.env
+.env.local
+.env.production
+.env.staging
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.json
+credentials.json
+config.json
+
+# Logs that might contain sensitive data
+*.log
+logs/
