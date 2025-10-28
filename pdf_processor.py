@@ -25,6 +25,12 @@ from dotenv import load_dotenv
 from docx import Document
 import tempfile
 import subprocess
+import math
+
+try:
+    import pytesseract  # type: ignore
+except Exception:  # pragma: no cover
+    pytesseract = None
 
 # Load environment variables
 load_dotenv()
@@ -53,6 +59,7 @@ class PDFProcessor:
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.log_level = os.getenv("LOG_LEVEL", "INFO")
         self.language = os.getenv("LANGUAGE", "nl")  # Dutch by default
+        self.use_ocr_fallback = os.getenv("USE_OCR_FALLBACK", "False").lower() == "true"
 
         # Create output directories
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +76,61 @@ class PDFProcessor:
         self.image_metadata = []
         self.text_chunks = []
         self.lexical_components = set()
+
+    def _render_page_to_image(self, page, dpi: int = 200):
+        """Render a PDF page to a PIL Image."""
+        try:
+            pix = page.get_pixmap(dpi=dpi)
+            mode = "RGB" if pix.alpha == 0 else "RGBA"
+            img = Image.frombytes(mode, (pix.width, pix.height), pix.samples)
+            return img
+        except Exception:
+            return None
+
+    def extract_ocr_bboxes(self, page) -> list:
+        """Extract OCR text boxes from a page using pytesseract.image_to_data.
+
+        Returns a list of dicts: {"text": str, "bbox": [x0,y0,x1,y1]}
+        Coordinates are in rendered image space; we map them back to PDF coords.
+        """
+        if not self.use_ocr_fallback or pytesseract is None:
+            return []
+
+        img = self._render_page_to_image(page, dpi=200)
+        if img is None:
+            return []
+
+        try:
+            data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+        except Exception:
+            return []
+
+        # Map image coords back to PDF coords via scale factors
+        page_rect = page.rect
+        scale_x = page_rect.width / float(img.width)
+        scale_y = page_rect.height / float(img.height)
+
+        results = []
+        n = len(data.get("text", []))
+        for i in range(n):
+            txt = (data["text"][i] or "").strip()
+            if not txt:
+                continue
+            try:
+                x = int(data["left"][i])
+                y = int(data["top"][i])
+                w = int(data["width"][i])
+                h = int(data["height"][i])
+            except Exception:
+                continue
+            # Tesseract y grows downward; PDF origin is top-left in fitz coordinate system for page.rect mapping
+            x0 = x * scale_x
+            y0 = y * scale_y
+            x1 = (x + w) * scale_x
+            y1 = (y + h) * scale_y
+            results.append({"text": txt, "bbox": [x0, y0, x1, y1]})
+
+        return results
 
     def _load_spacy_model(self):
         """Load appropriate spaCy model based on language setting."""
@@ -145,8 +207,49 @@ class PDFProcessor:
 
         return None
 
+    def _log_image_summary(self, manual_id: str) -> None:
+        native = sum(
+            1
+            for m in self.image_metadata
+            if m.get("manual_id") == manual_id and m.get("bbox_source") == "native"
+        )
+        vector = sum(
+            1
+            for m in self.image_metadata
+            if m.get("manual_id") == manual_id and m.get("bbox_source") == "vector"
+        )
+        total = sum(1 for m in self.image_metadata if m.get("manual_id") == manual_id)
+        print(f"Image extraction summary for {manual_id}:")
+        print(f"  Native images: {native}")
+        print(f"  Vector figures: {vector}")
+        print(f"  Total entries: {total}")
+
     def process_all_documents(self) -> None:
         """Process all supported documents in the input directory."""
+        # Reset previous results to avoid duplication
+        self.image_metadata = []
+        self.text_chunks = []
+        self.lexical_components = set()
+        self.global_image_counter = 0
+        self.global_chunk_counter = 0
+
+        for file in [
+            "image_metadata.json",
+            "text_chunks.json",
+            "lexical_components.json",
+        ]:
+            path = self.output_dir / file
+            if path.exists():
+                path.unlink()
+
+        # Remove all images in the images directory
+        for image in self.images_dir.glob("*"):
+            try:
+                image.unlink()
+            except Exception as e:
+                print(f"Error removing image {image}: {e}")
+                continue
+
         # Find all supported file types
         all_files = []
         for file_type in self.allowed_file_types:
@@ -183,6 +286,7 @@ class PDFProcessor:
             self.extract_images_from_pdf(file_path, manual_id)
             # Extract text chunks and captions
             self.extract_text_chunks_from_pdf(file_path, manual_id)
+            self._log_image_summary(manual_id)
         elif file_extension in [".docx", ".doc"]:
             # Convert to PDF to obtain proper bounding boxes, then process as PDF
             converted_pdf = self._convert_word_to_pdf(file_path)
@@ -190,12 +294,12 @@ class PDFProcessor:
                 # Use the PDF pipeline (images + text with bbox + captions)
                 self.extract_images_from_pdf(converted_pdf, manual_id)
                 self.extract_text_chunks_from_pdf(converted_pdf, manual_id)
+                self._log_image_summary(manual_id)
             else:
-                print(
-                    "Warning: Word->PDF conversion failed; falling back to direct Word extraction (no bbox)."
+                # Do not proceed without bbox-capable pipeline
+                raise RuntimeError(
+                    "Word->PDF conversion failed; aborting to avoid zero-bbox Word extraction."
                 )
-                self.extract_images_from_word(file_path, manual_id)
-                self.extract_text_chunks_from_word(file_path, manual_id)
         else:
             print(f"Unsupported file type: {file_extension}")
 
@@ -223,16 +327,92 @@ class PDFProcessor:
                         image_ext = base_image["ext"]
 
                         # Get image bounding box
-                        img_rect = (
-                            page.get_image_rects(xref)[0]
-                            if page.get_image_rects(xref)
-                            else None
-                        )
+                        # Primary: use MuPDF-provided image rects
+                        rects = page.get_image_rects(xref)
+                        img_rect = rects[0] if rects else None
+                        bbox_source = None
                         bbox = (
                             [img_rect.x0, img_rect.y0, img_rect.x1, img_rect.y1]
                             if img_rect
-                            else [0, 0, 0, 0]
+                            else None
                         )
+                        if bbox is not None:
+                            bbox_source = "native"
+
+                        # Fallback: parse page text dict to find image block with matching xref
+                        if bbox is None:
+                            try:
+                                raw = page.get_text("dict")
+                                fallback_bbox = None
+                                for block in raw.get("blocks", []):
+                                    if block.get("type") == 1:  # image block
+                                        info = block.get("image", {})
+                                        block_xref = info.get("xref")
+                                        if block_xref == xref and "bbox" in block:
+                                            fb = block["bbox"]
+                                            fallback_bbox = [fb[0], fb[1], fb[2], fb[3]]
+                                            break
+                                if fallback_bbox is not None:
+                                    bbox = fallback_bbox
+                                    bbox_source = "dict_fallback"
+                                else:
+                                    # As a last resort, use first image block bbox on the page
+                                    img_blocks = [
+                                        b
+                                        for b in raw.get("blocks", [])
+                                        if b.get("type") == 1 and "bbox" in b
+                                    ]
+                                    if img_blocks:
+                                        fb = img_blocks[
+                                            min(img_idx, len(img_blocks) - 1)
+                                        ]["bbox"]
+                                        bbox = [fb[0], fb[1], fb[2], fb[3]]
+                                        bbox_source = "dict_fallback"
+                            except Exception:
+                                bbox = None
+
+                        if bbox is None:
+                            # OCR-based approximation: find nearest caption OCR box, then search nearby OCR regions
+                            ocr_boxes = self.extract_ocr_bboxes(page)
+                            approx = None
+                            # Try to find caption-like OCR text
+                            caption_regex = re.compile(
+                                r"\b(Fig\.|Figure|Figuur|Afb\.|Afbeelding|Foto)\b",
+                                re.IGNORECASE,
+                            )
+                            caption_boxes = [
+                                b
+                                for b in ocr_boxes
+                                if caption_regex.search(b["text"]) is not None
+                            ]
+                            # If a caption box exists, use a region above/below as proxy
+                            if caption_boxes:
+                                cb = caption_boxes[0]["bbox"]
+                                # Heuristic: image likely above the caption; expand region above
+                                y_top = max(0, cb[1] - (page.rect.height * 0.35))
+                                approx = [
+                                    max(0, cb[0] - 50),
+                                    y_top,
+                                    min(page.rect.width, cb[2] + 50),
+                                    cb[1] - 5,
+                                ]
+                            else:
+                                # As last resort, use union of all OCR boxes on page which are not tiny
+                                big = [
+                                    b["bbox"]
+                                    for b in ocr_boxes
+                                    if (b["bbox"][2] - b["bbox"][0])
+                                    * (b["bbox"][3] - b["bbox"][1])
+                                    > 2000
+                                ]
+                                if big:
+                                    x0 = min(bb[0] for bb in big)
+                                    y0 = min(bb[1] for bb in big)
+                                    x1 = max(bb[2] for bb in big)
+                                    y1 = max(bb[3] for bb in big)
+                                    approx = [x0, y0, x1, y1]
+                            bbox = [0, 0, 0, 0]
+                            bbox_source = "unknown"
 
                         # Create unique filename
                         image_filename = (
@@ -250,8 +430,10 @@ class PDFProcessor:
                             "manual_id": manual_id,
                             "page": page_num + 1,
                             "bbox": bbox,
+                            "bbox_source": bbox_source or "unknown",
                             "caption": None,  # Will be filled later
                             "filename": image_filename,
+                            "image_type": "raster_image",
                         }
 
                         self.image_metadata.append(image_metadata)
@@ -262,6 +444,34 @@ class PDFProcessor:
                             f"Error extracting image {img_idx} from page {page_num}: {e}"
                         )
                         continue
+
+                # Vector drawing detection
+                try:
+                    drawings = page.get_drawings()
+                    v_idx = 0
+                    for d in drawings:
+                        rect = d.get("rect")
+                        if not rect:
+                            continue
+                        w = float(rect.x1 - rect.x0)
+                        h = float(rect.y1 - rect.y0)
+                        if w < 5 or h < 5:
+                            continue
+                        vector_meta = {
+                            "image_id": f"{manual_id}_p{page_num + 1}_vector{v_idx}",
+                            "manual_id": manual_id,
+                            "page": page_num + 1,
+                            "bbox": [rect.x0, rect.y0, rect.x1, rect.y1],
+                            "bbox_source": "vector",
+                            "caption": None,
+                            "filename": None,
+                            "image_type": "vector_figure",
+                        }
+                        self.image_metadata.append(vector_meta)
+                        self.global_image_counter += 1
+                        v_idx += 1
+                except Exception:
+                    pass
 
             doc.close()
 
@@ -318,10 +528,12 @@ class PDFProcessor:
                             "manual_id": manual_id,
                             "page": 1,  # Word docs don't have clear page breaks
                             "bbox": [0, 0, 0, 0],  # No bbox available for Word images
+                            "bbox_source": "unknown",
                             "dimensions": {"width": width, "height": height},
                             "image_order": self.global_image_counter,
                             "caption": None,  # Will be filled later
                             "filename": image_filename,
+                            "image_type": "raster_image",
                         }
 
                         self.image_metadata.append(image_metadata)
@@ -417,29 +629,45 @@ class PDFProcessor:
 
         try:
             # Get text objects with bounding boxes
-            words = page.extract_words()
+            # Try to get words with reasonable tolerances to maximize detection
+            try:
+                words = page.extract_words(
+                    x_tolerance=2, y_tolerance=2, keep_blank_chars=False
+                )
+            except Exception:
+                words = page.extract_words()
 
             if not words:
                 # Fallback: extract plain text and split by lines
                 plain_text = page.extract_text()
+                added_any = False
                 if plain_text:
                     lines = plain_text.split("\n")
                     for line_idx, line in enumerate(lines):
                         if line.strip():
+                            # Try OCR to infer bbox of this line
+                            ocr_boxes = self.extract_ocr_bboxes(page)
+                            bbox = [0, 0, 0, 0]
+                            if ocr_boxes:
+                                # pick the closest OCR box text-wise (simple containment match)
+                                candidates = [
+                                    b
+                                    for b in ocr_boxes
+                                    if line.strip() in b["text"]
+                                    or b["text"] in line.strip()
+                                ]
+                                if candidates:
+                                    bbox = candidates[0]["bbox"]
                             chunk_metadata = {
                                 "chunk_id": f"{manual_id}_p{page_num}_c{line_idx}",
                                 "manual_id": manual_id,
                                 "page": page_num,
-                                "bbox": [
-                                    0,
-                                    0,
-                                    0,
-                                    0,
-                                ],  # No bbox available for plain text
+                                "bbox": bbox,
                                 "text": line.strip(),
                             }
                             text_blocks.append(chunk_metadata)
                             self.global_chunk_counter += 1
+                            added_any = True
                 return text_blocks
 
             # Group words into lines based on vertical proximity
@@ -451,16 +679,32 @@ class PDFProcessor:
             for chunk_idx, chunk_text in enumerate(chunks):
                 if chunk_text.strip():
                     # Calculate bounding box for the chunk
-                    chunk_words = [
-                        w
-                        for line in lines
-                        for w in line
-                        if any(w["text"] in chunk_text for _ in [1])
-                    ]
-                    if chunk_words:
-                        bbox = self.calculate_chunk_bbox(chunk_words)
-                    else:
-                        bbox = [0, 0, 0, 0]
+                    # Heuristic: use the bbox of the source line if sentence-level mapping is uncertain
+                    # Find the first line that contributed text to this chunk
+                    bbox = [0, 0, 0, 0]
+                    for line in lines:
+                        line_text = " ".join([w["text"] for w in line]).strip()
+                        if not line_text:
+                            continue
+                        if (
+                            chunk_text.strip() in line_text
+                            or line_text in chunk_text.strip()
+                        ):
+                            bbox = self.calculate_chunk_bbox(line)
+                            break
+                    # Fallback: union of all words whose text overlaps token-wise with the chunk
+                    if bbox == [0, 0, 0, 0]:
+                        chunk_tokens = set(
+                            t for t in re.split(r"\s+", chunk_text.strip()) if t
+                        )
+                        chunk_words = [
+                            w
+                            for line in lines
+                            for w in line
+                            if w.get("text") and w["text"] in chunk_tokens
+                        ]
+                        if chunk_words:
+                            bbox = self.calculate_chunk_bbox(chunk_words)
 
                     chunk_metadata = {
                         "chunk_id": f"{manual_id}_p{page_num}_c{chunk_idx}",
@@ -502,26 +746,26 @@ class PDFProcessor:
             return []
 
         # Sort words by vertical position
-        words.sort(key=lambda w: w["top"])
+        words.sort(key=lambda w: w.get("top", 0))
 
         lines = []
         current_line = [words[0]]
-        line_height = words[0]["bottom"] - words[0]["top"]
+        line_height = words[0].get("bottom", 0) - words[0].get("top", 0)
         tolerance = line_height * 0.5
 
         for word in words[1:]:
             # Check if word is on the same line
-            if abs(word["top"] - current_line[0]["top"]) <= tolerance:
+            if abs(word.get("top", 0) - current_line[0].get("top", 0)) <= tolerance:
                 current_line.append(word)
             else:
                 # Sort current line by horizontal position
-                current_line.sort(key=lambda w: w["left"])
+                current_line.sort(key=lambda w: w.get("x0", w.get("left", 0)))
                 lines.append(current_line)
                 current_line = [word]
 
         # Add the last line
         if current_line:
-            current_line.sort(key=lambda w: w["left"])
+            current_line.sort(key=lambda w: w.get("x0", w.get("left", 0)))
             lines.append(current_line)
 
         return lines
@@ -586,10 +830,11 @@ class PDFProcessor:
         if not words:
             return [0, 0, 0, 0]
 
-        left = min(word["left"] for word in words)
-        top = min(word["top"] for word in words)
-        right = max(word["right"] for word in words)
-        bottom = max(word["bottom"] for word in words)
+        # pdfplumber words use x0,x1,top,bottom; support both
+        left = min(word.get("x0", word.get("left", 0)) for word in words)
+        top = min(word.get("top", 0) for word in words)
+        right = max(word.get("x1", word.get("right", 0)) for word in words)
+        bottom = max(word.get("bottom", 0) for word in words)
 
         return [left, top, right, bottom]
 
