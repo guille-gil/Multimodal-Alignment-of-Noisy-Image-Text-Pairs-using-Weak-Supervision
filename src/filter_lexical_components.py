@@ -14,9 +14,10 @@ Usage:
 import json
 from pathlib import Path
 
-# Paths
-INPUT_FILE = Path("data/processed/lexical_components.json")
-OUTPUT_FILE = Path("data/processed/filtered_lexical_components.json")
+# Paths (relative to project root)
+BASE_DIR = Path(__file__).parent.parent
+INPUT_FILE = BASE_DIR / "data/processed/lexical_components.json"
+OUTPUT_FILE = BASE_DIR / "data/processed/filtered_lexical_components.json"
 
 # Terms to exclude (manually maintained by operators)
 # Add terms that are not relevant for CLIP alignment

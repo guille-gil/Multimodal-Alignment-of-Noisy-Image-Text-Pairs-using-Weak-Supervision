@@ -4,7 +4,7 @@ Database setup script for pgvector-based CLIP embedding storage.
 Creates 4 schemas:
 - vanilla_clip: Standard CLIP embeddings
 - clip_lexical: CLIP + lexical component weak supervision
-- clip_positional: CLIP + positional (bbox) weak supervision  
+- clip_positional: CLIP + positional (bbox) weak supervision
 - clip_combined: CLIP + both lexical and positional weak supervision
 """
 
@@ -35,32 +35,30 @@ def setup_database():
             port=DB_PORT,
             dbname=DB_NAME,
             user=DB_USER,
-            password=DB_PASSWORD
+            password=DB_PASSWORD,
         )
         print("✅ Connection to PostgreSQL successful!")
-        
+
         cur = conn.cursor()
-        
+
         # Enable pgvector extension
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         print("✅ pgvector extension enabled")
-        
+
         # Define schemas
-        schemas = [
-            "vanilla_clip",
-            "clip_lexical", 
-            "clip_positional",
-            "clip_combined"
-        ]
-        
+        schemas = ["vanilla_clip", "clip_lexical", "clip_positional", "clip_combined"]
+
         for schema_name in schemas:
             # Create schema
-            cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(
-                sql.Identifier(schema_name)
-            ))
-            
+            cur.execute(
+                sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(
+                    sql.Identifier(schema_name)
+                )
+            )
+
             # Create images table
-            cur.execute(sql.SQL("""
+            cur.execute(
+                sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {}.images (
                     id SERIAL PRIMARY KEY,
                     image_id VARCHAR(255) UNIQUE NOT NULL,
@@ -74,13 +72,12 @@ def setup_database():
                     clip_embedding vector({}) NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
-            """).format(
-                sql.Identifier(schema_name),
-                sql.Literal(CLIP_DIM)
-            ))
-            
+            """).format(sql.Identifier(schema_name), sql.Literal(CLIP_DIM))
+            )
+
             # Create text_chunks table
-            cur.execute(sql.SQL("""
+            cur.execute(
+                sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {}.text_chunks (
                     id SERIAL PRIMARY KEY,
                     chunk_id VARCHAR(255) UNIQUE NOT NULL,
@@ -91,13 +88,12 @@ def setup_database():
                     clip_embedding vector({}) NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
-            """).format(
-                sql.Identifier(schema_name),
-                sql.Literal(CLIP_DIM)
-            ))
-            
+            """).format(sql.Identifier(schema_name), sql.Literal(CLIP_DIM))
+            )
+
             # Create alignment table (for weak supervision pairs)
-            cur.execute(sql.SQL("""
+            cur.execute(
+                sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {}.alignments (
                     id SERIAL PRIMARY KEY,
                     image_id VARCHAR(255) REFERENCES {}.images(image_id),
@@ -108,60 +104,73 @@ def setup_database():
                     UNIQUE(image_id, chunk_id, alignment_type)
                 );
             """).format(
-                sql.Identifier(schema_name),
-                sql.Identifier(schema_name),
-                sql.Identifier(schema_name)
-            ))
-            
+                    sql.Identifier(schema_name),
+                    sql.Identifier(schema_name),
+                    sql.Identifier(schema_name),
+                )
+            )
+
             # Create indexes for efficient similarity search
             # HNSW index for vector similarity (if pgvector version supports it)
             try:
-                cur.execute(sql.SQL("""
+                cur.execute(
+                    sql.SQL("""
                     CREATE INDEX IF NOT EXISTS {schema}_images_embedding_idx 
                     ON {schema}.images 
                     USING hnsw (clip_embedding vector_cosine_ops);
-                """).format(schema=sql.Identifier(schema_name)))
-                
-                cur.execute(sql.SQL("""
+                """).format(schema=sql.Identifier(schema_name))
+                )
+
+                cur.execute(
+                    sql.SQL("""
                     CREATE INDEX IF NOT EXISTS {schema}_chunks_embedding_idx 
                     ON {schema}.text_chunks 
                     USING hnsw (clip_embedding vector_cosine_ops);
-                """).format(schema=sql.Identifier(schema_name)))
+                """).format(schema=sql.Identifier(schema_name))
+                )
             except Exception as e:
                 # Fallback to ivfflat if HNSW not available
                 print(f"⚠️  HNSW not available, using ivfflat: {e}")
-                cur.execute(sql.SQL("""
+                cur.execute(
+                    sql.SQL("""
                     CREATE INDEX IF NOT EXISTS {schema}_images_embedding_idx 
                     ON {schema}.images 
                     USING ivfflat (clip_embedding vector_cosine_ops) 
                     WITH (lists = 100);
-                """).format(schema=sql.Identifier(schema_name)))
-                
-                cur.execute(sql.SQL("""
+                """).format(schema=sql.Identifier(schema_name))
+                )
+
+                cur.execute(
+                    sql.SQL("""
                     CREATE INDEX IF NOT EXISTS {schema}_chunks_embedding_idx 
                     ON {schema}.text_chunks 
                     USING ivfflat (clip_embedding vector_cosine_ops) 
                     WITH (lists = 100);
-                """).format(schema=sql.Identifier(schema_name)))
-            
+                """).format(schema=sql.Identifier(schema_name))
+                )
+
             # Indexes for metadata queries
-            cur.execute(sql.SQL("""
+            cur.execute(
+                sql.SQL("""
                 CREATE INDEX IF NOT EXISTS {schema}_images_manual_idx 
                 ON {schema}.images(manual_id);
-            """).format(schema=sql.Identifier(schema_name)))
-            
-            cur.execute(sql.SQL("""
+            """).format(schema=sql.Identifier(schema_name))
+            )
+
+            cur.execute(
+                sql.SQL("""
                 CREATE INDEX IF NOT EXISTS {schema}_chunks_manual_idx 
                 ON {schema}.text_chunks(manual_id);
-            """).format(schema=sql.Identifier(schema_name)))
-            
+            """).format(schema=sql.Identifier(schema_name))
+            )
+
             print(f"✅ Schema '{schema_name}' created with tables and indexes")
-        
+
         conn.commit()
         cur.close()
         conn.close()
         print("\n🔒 Database setup complete!")
-        
+
     except OperationalError as e:
         print("❌ Could not connect to PostgreSQL:")
         print(e)
@@ -172,4 +181,3 @@ def setup_database():
 
 if __name__ == "__main__":
     setup_database()
-
