@@ -26,6 +26,7 @@ from docx import Document
 import tempfile
 import subprocess
 import math
+from collections import Counter
 
 try:
     import pytesseract  # type: ignore
@@ -76,6 +77,45 @@ class PDFProcessor:
         self.image_metadata = []
         self.text_chunks = []
         self.lexical_components = set()
+
+        # Section tracking for structural hierarchy
+        self.current_section = None
+        self.current_level = None
+        self.section_stats = {"sections": 0, "subsections": 0}
+
+    def detect_section_level(self, text: str) -> Tuple[Optional[str], Optional[int]]:
+        """Detect section headers like 'Section 2.1 Maintenance' or '2.1.3 Rotor Assembly'."""
+        # Pattern to match hierarchical section numbering
+        pattern = re.compile(
+            r"^(Section|Hoofdstuk|Hfdst\.|§)?\s*(\d+(?:\.\d+)+)\s*[:\-]?\s*(.*)$",
+            re.IGNORECASE,
+        )
+        match = pattern.match(text.strip())
+        if match:
+            title = match.group(0).strip()
+            # Count how many numbers in the hierarchy to define level
+            nums = re.findall(r"\d+", match.group(2))
+            level = len(nums)
+            return title, level
+        return None, None
+
+    def filter_invalid_bboxes(self, images):
+        """Remove or ignore images that have zero bounding boxes."""
+        if not images:
+            return images
+        valid = [
+            img
+            for img in images
+            if img.get("bbox") and any((c or 0) != 0 for c in img["bbox"])
+        ]
+        invalid_count = len(images) - len(valid)
+        if invalid_count > 0:
+            total = len(images)
+            ratio = (invalid_count / total) if total else 0.0
+            print(
+                f"Filtered out {invalid_count} images with zero bounding boxes ({ratio:.2%})."
+            )
+        return valid
 
     def _render_page_to_image(self, page, dpi: int = 200):
         """Render a PDF page to a PIL Image."""
@@ -224,6 +264,19 @@ class PDFProcessor:
         print(f"  Vector figures: {vector}")
         print(f"  Total entries: {total}")
 
+    def _log_section_summary(self, manual_id: str) -> None:
+        """Log section hierarchy statistics for a document."""
+        # Get total pages processed for this manual
+        doc_chunks = [c for c in self.text_chunks if c.get("manual_id") == manual_id]
+        total_pages = len(set(c.get("page") for c in doc_chunks if c.get("page")))
+
+        print(
+            f"Structure extraction for {manual_id}: "
+            f"Detected {self.section_stats['sections']} sections and "
+            f"{self.section_stats['subsections']} subsections across "
+            f"{total_pages} pages."
+        )
+
     def process_all_documents(self) -> None:
         """Process all supported documents in the input directory."""
         # Reset previous results to avoid duplication
@@ -281,12 +334,18 @@ class PDFProcessor:
 
         print(f"Processing {manual_id} ({file_extension})...")
 
+        # Reset section tracking for new document
+        self.current_section = None
+        self.current_level = None
+        self.section_stats = {"sections": 0, "subsections": 0}
+
         if file_extension == ".pdf":
             # Extract images
             self.extract_images_from_pdf(file_path, manual_id)
             # Extract text chunks and captions
             self.extract_text_chunks_from_pdf(file_path, manual_id)
             self._log_image_summary(manual_id)
+            self._log_section_summary(manual_id)
         elif file_extension in [".docx", ".doc"]:
             # Convert to PDF to obtain proper bounding boxes, then process as PDF
             converted_pdf = self._convert_word_to_pdf(file_path)
@@ -295,6 +354,7 @@ class PDFProcessor:
                 self.extract_images_from_pdf(converted_pdf, manual_id)
                 self.extract_text_chunks_from_pdf(converted_pdf, manual_id)
                 self._log_image_summary(manual_id)
+                self._log_section_summary(manual_id)
             else:
                 # Do not proceed without bbox-capable pipeline
                 raise RuntimeError(
@@ -424,7 +484,7 @@ class PDFProcessor:
                         with open(image_path, "wb") as img_file:
                             img_file.write(image_bytes)
 
-                        # Store metadata
+                        # Store metadata with section context
                         image_metadata = {
                             "image_id": f"{manual_id}_p{page_num + 1}_img{img_idx}",
                             "manual_id": manual_id,
@@ -434,6 +494,8 @@ class PDFProcessor:
                             "caption": None,  # Will be filled later
                             "filename": image_filename,
                             "image_type": "raster_image",
+                            "section_title": self.current_section,
+                            "section_level": self.current_level,
                         }
 
                         self.image_metadata.append(image_metadata)
@@ -466,6 +528,8 @@ class PDFProcessor:
                             "caption": None,
                             "filename": None,
                             "image_type": "vector_figure",
+                            "section_title": self.current_section,
+                            "section_level": self.current_level,
                         }
                         self.image_metadata.append(vector_meta)
                         self.global_image_counter += 1
@@ -550,10 +614,11 @@ class PDFProcessor:
         """Extract text chunks and captions using pdfplumber."""
         try:
             with pdfplumber.open(pdf_path) as pdf:
+                total_pages = len(pdf.pages)
                 for page_num, page in enumerate(pdf.pages):
-                    # Extract text blocks
+                    # Extract text blocks with section tracking
                     text_blocks = self.extract_text_blocks(
-                        page, manual_id, page_num + 1
+                        page, manual_id, page_num + 1, total_pages
                     )
                     self.text_chunks.extend(text_blocks)
 
@@ -622,7 +687,7 @@ class PDFProcessor:
             print(f"Error extracting text from Word document {word_path}: {e}")
 
     def extract_text_blocks(
-        self, page, manual_id: str, page_num: int
+        self, page, manual_id: str, page_num: int, total_pages: int
     ) -> List[Dict[str, Any]]:
         """Extract text blocks and split into instruction-level chunks."""
         text_blocks = []
@@ -706,12 +771,24 @@ class PDFProcessor:
                         if chunk_words:
                             bbox = self.calculate_chunk_bbox(chunk_words)
 
+                    # Detect if this chunk is a section header
+                    section_title, section_level = self.detect_section_level(chunk_text)
+                    if section_title:
+                        self.current_section = section_title
+                        self.current_level = section_level
+                        if section_level == 1:
+                            self.section_stats["sections"] += 1
+                        else:
+                            self.section_stats["subsections"] += 1
+
                     chunk_metadata = {
                         "chunk_id": f"{manual_id}_p{page_num}_c{chunk_idx}",
                         "manual_id": manual_id,
                         "page": page_num,
                         "bbox": bbox,
                         "text": chunk_text.strip(),
+                        "section_title": self.current_section,
+                        "section_level": self.current_level,
                     }
 
                     text_blocks.append(chunk_metadata)
@@ -972,7 +1049,7 @@ class PDFProcessor:
         return text.strip()
 
     def extract_lexical_components(self, text: str) -> List[str]:
-        """Extract lexical components from text using spaCy."""
+        """Extract lexical components from text using spaCy - nouns only for visual entities."""
         if not self.nlp:
             return []
 
@@ -980,19 +1057,37 @@ class PDFProcessor:
         components = []
 
         for token in doc:
-            # Extract meaningful tokens (nouns, verbs, adjectives, etc.)
+            # Extract only nouns (visual entities that can appear in images)
+            # Apply stricter filtering to catch artifacts
+            lemma_lower = token.lemma_.lower().strip()
+
+            # Filter criteria:
+            # - Must be a noun
+            # - Not a stop word
+            # - Not punctuation
+            # - Minimum length of 4 characters (to filter artifacts like "pken", "proce", "visionplaa")
+            # - Must be alphanumeric (no special characters except hyphens for compound words)
+            # - Must have at least one letter (not just digits)
             if (
-                token.pos_ in ["NOUN", "VERB", "ADJ", "ADV"]
+                token.pos_ == "NOUN"
                 and not token.is_stop
                 and not token.is_punct
-                and len(token.text) > 2
+                and len(lemma_lower) >= 4
+                and (
+                    lemma_lower.replace("-", "").replace("_", "").isalnum()
+                    or "-" in lemma_lower
+                )
+                and any(c.isalpha() for c in lemma_lower)  # At least one letter
             ):
-                components.append(token.lemma_.lower())
+                components.append(lemma_lower)
 
         return components
 
     def save_extracted_data(self) -> None:
         """Save all extracted data to JSON files."""
+        # Step 1: Filter images with zero bboxes before saving
+        self.image_metadata = self.filter_invalid_bboxes(self.image_metadata)
+
         # Save image metadata
         with open(self.output_dir / "image_metadata.json", "w") as f:
             json.dump(self.image_metadata, f, indent=2)
@@ -1006,20 +1101,28 @@ class PDFProcessor:
         processed_text = self.preprocess_text(all_text)
         lexical_components = self.extract_lexical_components(processed_text)
 
-        # Create lexical components list (remove duplicates)
-        unique_components = list(set(lexical_components))
-        unique_components.sort()
+        # Count frequencies and sort by frequency (descending), then alphabetically
+        component_counts = Counter(lexical_components)
+
+        # Create list of (term, count) tuples, sorted by frequency (desc), then alphabetically
+        sorted_components = sorted(
+            component_counts.items(),
+            key=lambda x: (-x[1], x[0]),  # Sort by -count (desc), then by term (asc)
+        )
 
         lexical_data = {
-            "total_components": len(unique_components),
-            "components": unique_components,
+            "total_components": len(sorted_components),
+            "total_occurrences": sum(component_counts.values()),
+            "components": [
+                {"term": term, "count": count} for term, count in sorted_components
+            ],
         }
 
         with open(self.output_dir / "lexical_components.json", "w") as f:
             json.dump(lexical_data, f, indent=2)
 
         print(
-            f"Saved {len(self.image_metadata)} images, {len(self.text_chunks)} text chunks, and {len(unique_components)} lexical components"
+            f"Saved {len(self.image_metadata)} images, {len(self.text_chunks)} text chunks, and {len(sorted_components)} unique lexical components (nouns only)"
         )
 
 
