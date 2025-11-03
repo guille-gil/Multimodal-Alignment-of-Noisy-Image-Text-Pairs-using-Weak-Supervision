@@ -55,7 +55,6 @@ class PDFProcessor:
         self.allowed_file_types = os.getenv("ALLOWED_FILE_TYPES", "pdf,docx,doc").split(
             ","
         )
-        self.api_key = os.getenv("OPENAI_API_KEY")
         self.log_level = os.getenv("LOG_LEVEL", "INFO")
         self.language = os.getenv("LANGUAGE", "nl")  # Dutch by default
         self.use_ocr_fallback = os.getenv("USE_OCR_FALLBACK", "False").lower() == "true"
