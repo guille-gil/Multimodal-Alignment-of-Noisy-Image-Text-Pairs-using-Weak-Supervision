@@ -223,7 +223,8 @@ data/
 *.ppt
 
 # Processed data outputs
-*.json
+data/processed/*.json
+data/processed/images/*
 *.png
 *.jpg
 *.jpeg
@@ -231,6 +232,9 @@ data/
 *.bmp
 *.tiff
 *.svg
+
+# Evaluation results
+evaluation_results/
 
 # Temporary files
 temp_*

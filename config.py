@@ -2,7 +2,6 @@
 Configuration file for the PDF processing pipeline.
 """
 
-import os
 from pathlib import Path
 
 # Base directories

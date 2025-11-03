@@ -76,27 +76,6 @@ class PDFProcessor:
         self.text_chunks = []
         self.lexical_components = set()
 
-        # Section tracking for structural hierarchy
-        self.current_section = None
-        self.current_level = None
-        self.section_stats = {"sections": 0, "subsections": 0}
-
-    def detect_section_level(self, text: str) -> Tuple[Optional[str], Optional[int]]:
-        """Detect section headers like 'Section 2.1 Maintenance' or '2.1.3 Rotor Assembly'."""
-        # Pattern to match hierarchical section numbering
-        pattern = re.compile(
-            r"^(Section|Hoofdstuk|Hfdst\.|§)?\s*(\d+(?:\.\d+)+)\s*[:\-]?\s*(.*)$",
-            re.IGNORECASE,
-        )
-        match = pattern.match(text.strip())
-        if match:
-            title = match.group(0).strip()
-            # Count how many numbers in the hierarchy to define level
-            nums = re.findall(r"\d+", match.group(2))
-            level = len(nums)
-            return title, level
-        return None, None
-
     def filter_invalid_bboxes(self, images):
         """Remove or ignore images that have zero bounding boxes."""
         if not images:
@@ -262,19 +241,6 @@ class PDFProcessor:
         print(f"  Vector figures: {vector}")
         print(f"  Total entries: {total}")
 
-    def _log_section_summary(self, manual_id: str) -> None:
-        """Log section hierarchy statistics for a document."""
-        # Get total pages processed for this manual
-        doc_chunks = [c for c in self.text_chunks if c.get("manual_id") == manual_id]
-        total_pages = len(set(c.get("page") for c in doc_chunks if c.get("page")))
-
-        print(
-            f"Structure extraction for {manual_id}: "
-            f"Detected {self.section_stats['sections']} sections and "
-            f"{self.section_stats['subsections']} subsections across "
-            f"{total_pages} pages."
-        )
-
     def process_all_documents(self) -> None:
         """Process all supported documents in the input directory."""
         # Reset previous results to avoid duplication
@@ -332,18 +298,12 @@ class PDFProcessor:
 
         print(f"Processing {manual_id} ({file_extension})...")
 
-        # Reset section tracking for new document
-        self.current_section = None
-        self.current_level = None
-        self.section_stats = {"sections": 0, "subsections": 0}
-
         if file_extension == ".pdf":
             # Extract images
             self.extract_images_from_pdf(file_path, manual_id)
             # Extract text chunks and captions
             self.extract_text_chunks_from_pdf(file_path, manual_id)
             self._log_image_summary(manual_id)
-            self._log_section_summary(manual_id)
         elif file_extension in [".docx", ".doc"]:
             # Convert to PDF to obtain proper bounding boxes, then process as PDF
             converted_pdf = self._convert_word_to_pdf(file_path)
@@ -352,7 +312,6 @@ class PDFProcessor:
                 self.extract_images_from_pdf(converted_pdf, manual_id)
                 self.extract_text_chunks_from_pdf(converted_pdf, manual_id)
                 self._log_image_summary(manual_id)
-                self._log_section_summary(manual_id)
             else:
                 # Do not proceed without bbox-capable pipeline
                 raise RuntimeError(
@@ -430,45 +389,7 @@ class PDFProcessor:
                                 bbox = None
 
                         if bbox is None:
-                            # OCR-based approximation: find nearest caption OCR box, then search nearby OCR regions
-                            ocr_boxes = self.extract_ocr_bboxes(page)
-                            approx = None
-                            # Try to find caption-like OCR text
-                            caption_regex = re.compile(
-                                r"\b(Fig\.|Figure|Figuur|Afb\.|Afbeelding|Foto)\b",
-                                re.IGNORECASE,
-                            )
-                            caption_boxes = [
-                                b
-                                for b in ocr_boxes
-                                if caption_regex.search(b["text"]) is not None
-                            ]
-                            # If a caption box exists, use a region above/below as proxy
-                            if caption_boxes:
-                                cb = caption_boxes[0]["bbox"]
-                                # Heuristic: image likely above the caption; expand region above
-                                y_top = max(0, cb[1] - (page.rect.height * 0.35))
-                                approx = [
-                                    max(0, cb[0] - 50),
-                                    y_top,
-                                    min(page.rect.width, cb[2] + 50),
-                                    cb[1] - 5,
-                                ]
-                            else:
-                                # As last resort, use union of all OCR boxes on page which are not tiny
-                                big = [
-                                    b["bbox"]
-                                    for b in ocr_boxes
-                                    if (b["bbox"][2] - b["bbox"][0])
-                                    * (b["bbox"][3] - b["bbox"][1])
-                                    > 2000
-                                ]
-                                if big:
-                                    x0 = min(bb[0] for bb in big)
-                                    y0 = min(bb[1] for bb in big)
-                                    x1 = max(bb[2] for bb in big)
-                                    y1 = max(bb[3] for bb in big)
-                                    approx = [x0, y0, x1, y1]
+                            # No bbox found - set to zero
                             bbox = [0, 0, 0, 0]
                             bbox_source = "unknown"
 
@@ -482,7 +403,7 @@ class PDFProcessor:
                         with open(image_path, "wb") as img_file:
                             img_file.write(image_bytes)
 
-                        # Store metadata with section context
+                        # Store metadata
                         image_metadata = {
                             "image_id": f"{manual_id}_p{page_num + 1}_img{img_idx}",
                             "manual_id": manual_id,
@@ -492,8 +413,6 @@ class PDFProcessor:
                             "caption": None,  # Will be filled later
                             "filename": image_filename,
                             "image_type": "raster_image",
-                            "section_title": self.current_section,
-                            "section_level": self.current_level,
                         }
 
                         self.image_metadata.append(image_metadata)
@@ -526,8 +445,6 @@ class PDFProcessor:
                             "caption": None,
                             "filename": None,
                             "image_type": "vector_figure",
-                            "section_title": self.current_section,
-                            "section_level": self.current_level,
                         }
                         self.image_metadata.append(vector_meta)
                         self.global_image_counter += 1
@@ -703,7 +620,6 @@ class PDFProcessor:
             if not words:
                 # Fallback: extract plain text and split by lines
                 plain_text = page.extract_text()
-                added_any = False
                 if plain_text:
                     lines = plain_text.split("\n")
                     for line_idx, line in enumerate(lines):
@@ -730,7 +646,6 @@ class PDFProcessor:
                             }
                             text_blocks.append(chunk_metadata)
                             self.global_chunk_counter += 1
-                            added_any = True
                 return text_blocks
 
             # Group words into lines based on vertical proximity
@@ -769,24 +684,12 @@ class PDFProcessor:
                         if chunk_words:
                             bbox = self.calculate_chunk_bbox(chunk_words)
 
-                    # Detect if this chunk is a section header
-                    section_title, section_level = self.detect_section_level(chunk_text)
-                    if section_title:
-                        self.current_section = section_title
-                        self.current_level = section_level
-                        if section_level == 1:
-                            self.section_stats["sections"] += 1
-                        else:
-                            self.section_stats["subsections"] += 1
-
                     chunk_metadata = {
                         "chunk_id": f"{manual_id}_p{page_num}_c{chunk_idx}",
                         "manual_id": manual_id,
                         "page": page_num,
                         "bbox": bbox,
                         "text": chunk_text.strip(),
-                        "section_title": self.current_section,
-                        "section_level": self.current_level,
                     }
 
                     text_blocks.append(chunk_metadata)
@@ -1126,10 +1029,12 @@ class PDFProcessor:
 
 def main():
     """Main function to run the document processing pipeline."""
-    input_dir = "data/raw/manuals"
-    output_dir = "data/processed"
+    # Paths relative to project root (assuming script is run from root)
+    base_dir = Path(__file__).parent.parent
+    input_dir = base_dir / "data" / "raw" / "manuals"
+    output_dir = base_dir / "data" / "processed"
 
-    processor = PDFProcessor(input_dir, output_dir)
+    processor = PDFProcessor(str(input_dir), str(output_dir))
     processor.process_all_documents()
 
 
