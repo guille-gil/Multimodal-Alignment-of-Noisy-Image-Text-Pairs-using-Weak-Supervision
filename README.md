@@ -330,30 +330,7 @@ pip install -r requirements.txt
 python3 -m spacy download nl_core_news_sm  # or en_core_web_sm
 ```
 
-## Future Enhancements
-
-- Support for additional languages
-- Improved spatial relationship analysis
-- Better caption-to-image linking
-- Parallel processing for large document sets
-- Active learning for lexical component filtering
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## Support
-
-For issues and questions:
-1. Check the test installation script
-2. Review error logs
-3. Ensure all dependencies are properly installed
-4. Create an issue with detailed error information
