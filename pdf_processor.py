@@ -20,12 +20,10 @@ from typing import List, Dict, Any, Tuple, Optional
 from tqdm import tqdm
 import numpy as np
 from PIL import Image
-import io
 from dotenv import load_dotenv
 from docx import Document
 import tempfile
 import subprocess
-import math
 from collections import Counter
 
 try:
@@ -579,9 +577,9 @@ class PDFProcessor:
                         # Get image dimensions
                         try:
                             from PIL import Image
-                            import io
+                            from io import BytesIO
 
-                            img_pil = Image.open(io.BytesIO(image_data))
+                            img_pil = Image.open(BytesIO(image_data))
                             width, height = img_pil.size
                         except:
                             width, height = 0, 0
