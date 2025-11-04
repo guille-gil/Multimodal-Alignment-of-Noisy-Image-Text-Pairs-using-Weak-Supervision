@@ -3,6 +3,7 @@ Configuration file for the PDF processing pipeline.
 """
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -57,12 +58,22 @@ SPACY_MODEL = "en_core_web_sm"
 # Output format
 OUTPUT_FORMAT = "json"
 
-# Database connection parameters
+# Database mode: 'local' or 'remote' (default: 'remote')
+DB_MODE = os.getenv("DB_MODE", "remote")
+
+# Remote database connection parameters (used when DB_MODE=remote)
 DB_HOST = os.getenv("DB_HOST")
 DB_NAME = os.getenv("DB_NAME")
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_PORT = int(os.getenv("DB_PORT", "5432"))
+
+# Local database connection parameters (used when DB_MODE=local)
+LOCAL_DB_HOST = os.getenv("LOCAL_DB_HOST", "localhost")
+LOCAL_DB_PORT = int(os.getenv("LOCAL_DB_PORT", "5433"))
+LOCAL_DB_NAME = os.getenv("LOCAL_DB_NAME", "multimodal_align")
+LOCAL_DB_USER = os.getenv("LOCAL_DB_USER", "postgres")
+LOCAL_DB_PASSWORD = os.getenv("LOCAL_DB_PASSWORD", "postgres")
 
 # CLIP model configuration
 CLIP_MODEL = os.getenv("CLIP_MODEL", "ViT-B/32")
@@ -71,7 +82,7 @@ CLIP_DIM = int(os.getenv("CLIP_DIM", "512"))
 
 def get_db_connection(**kwargs):
     """
-    Get a PostgreSQL database connection.
+    Get a PostgreSQL database connection (local or remote based on DB_MODE).
 
     Args:
         **kwargs: Additional connection parameters (e.g., connect_timeout)
@@ -88,20 +99,49 @@ def get_db_connection(**kwargs):
             "psycopg2 is not installed. Install with: pip install psycopg2-binary"
         )
 
-    if not DB_HOST:
-        raise ValueError("DB_HOST environment variable is not set")
-    if not DB_NAME:
-        raise ValueError("DB_NAME environment variable is not set")
-    if not DB_USER:
-        raise ValueError("DB_USER environment variable is not set")
-    if not DB_PASSWORD:
-        raise ValueError("DB_PASSWORD environment variable is not set")
+    if DB_MODE == "local":
+        # Auto-start local database if not running
+        try:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from utils.manage_local_db import start_local_db, is_container_running
+
+            if not is_container_running():
+                print("🔄 Auto-starting local database...")
+                start_local_db()
+        except ImportError:
+            # utils may not be importable in all contexts, that's okay
+            pass
+        except Exception as e:
+            # If auto-start fails, continue anyway - user might start manually
+            print(f"⚠️  Could not auto-start local database: {e}")
+
+        host = LOCAL_DB_HOST
+        port = LOCAL_DB_PORT
+        dbname = LOCAL_DB_NAME
+        user = LOCAL_DB_USER
+        password = LOCAL_DB_PASSWORD
+    else:
+        # Remote database (existing logic)
+        host = DB_HOST
+        port = DB_PORT
+        dbname = DB_NAME
+        user = DB_USER
+        password = DB_PASSWORD
+
+        if not host:
+            raise ValueError("DB_HOST environment variable is not set")
+        if not dbname:
+            raise ValueError("DB_NAME environment variable is not set")
+        if not user:
+            raise ValueError("DB_USER environment variable is not set")
+        if not password:
+            raise ValueError("DB_PASSWORD environment variable is not set")
 
     return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
+        host=host,
+        port=port,
+        dbname=dbname,
+        user=user,
+        password=password,
         **kwargs,
     )
