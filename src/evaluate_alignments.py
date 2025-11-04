@@ -6,43 +6,26 @@ CLIP embeddings and weak supervision alignments across different schemas.
 """
 
 import json
-import psycopg2
-from pathlib import Path
-import numpy as np
-from typing import List, Dict, Tuple
-import os
-from dotenv import load_dotenv
+import sys
 from collections import defaultdict
-import matplotlib.pyplot as plt
-import seaborn as sns
+from pathlib import Path
+from typing import Dict, List, Tuple
 
-load_dotenv()
+import matplotlib.pyplot as plt  # type: ignore
+import numpy as np
 
-# Database connection
-DB_HOST = os.getenv("DB_HOST", "bachata.service.rug.nl")
-DB_NAME = os.getenv("DB_NAME", "aixpert")
-DB_USER = os.getenv("DB_USER", "pnumber")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
+# Add parent directory to path for imports
+BASE_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(BASE_DIR))
+
+from config import get_db_connection  # noqa: E402
 
 # Schemas to evaluate
 SCHEMAS = ["vanilla_clip", "clip_lexical", "clip_positional", "clip_combined"]
 
 # Output directory for charts (relative to project root)
-BASE_DIR = Path(__file__).parent.parent
 OUTPUT_DIR = BASE_DIR / "evaluation_results"
 OUTPUT_DIR.mkdir(exist_ok=True)
-
-
-def connect_db():
-    """Connect to PostgreSQL database."""
-    return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-    )
 
 
 def get_image_text_pairs(schema: str) -> List[Tuple[str, str, str, str]]:
@@ -51,7 +34,7 @@ def get_image_text_pairs(schema: str) -> List[Tuple[str, str, str, str]]:
 
     Returns: List of (image_id, chunk_id, manual_id, page) tuples
     """
-    conn = connect_db()
+    conn = get_db_connection()
     cur = conn.cursor()
 
     cur.execute(
@@ -71,7 +54,7 @@ def get_image_text_pairs(schema: str) -> List[Tuple[str, str, str, str]]:
 
 def compute_similarity(image_id: str, chunk_id: str, schema: str) -> float:
     """Compute cosine similarity between image and text chunk embeddings."""
-    conn = connect_db()
+    conn = get_db_connection()
     cur = conn.cursor()
 
     # Get embeddings
@@ -110,7 +93,7 @@ def get_top_k_similar_chunks(
     image_id: str, schema: str, k: int = 10
 ) -> List[Tuple[str, float]]:
     """Get top K most similar text chunks for an image."""
-    conn = connect_db()
+    conn = get_db_connection()
     cur = conn.cursor()
 
     # Get image embedding
@@ -145,7 +128,7 @@ def get_top_k_similar_chunks(
 
 def get_weak_supervision_scores(schema: str) -> Dict[str, List[float]]:
     """Get weak supervision alignment scores by type."""
-    conn = connect_db()
+    conn = get_db_connection()
     cur = conn.cursor()
 
     cur.execute(
@@ -367,7 +350,7 @@ def print_metrics_report():
 
         try:
             # Check if schema exists
-            conn = connect_db()
+            conn = get_db_connection()
             cur = conn.cursor()
             cur.execute(
                 f"""
