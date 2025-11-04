@@ -2,7 +2,7 @@
 Main pipeline orchestrator for the multimodal alignment system.
 
 Executes the complete pipeline with smart step skipping and operator-in-the-loop
-support for lexical component filtering.
+complete pipeline orchestration.
 """
 
 import argparse
@@ -16,7 +16,8 @@ from typing import Optional
 BASE_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from config import get_db_connection
+from config import get_db_connection  # noqa: E402
+from psycopg2 import sql  # noqa: E402
 
 # Paths (relative to project root)
 RAW_DIR = BASE_DIR / "data/raw/manuals"
@@ -24,8 +25,6 @@ PROCESSED_DIR = BASE_DIR / "data/processed"
 IMAGES_DIR = PROCESSED_DIR / "images"
 IMAGE_METADATA_FILE = PROCESSED_DIR / "image_metadata.json"
 TEXT_CHUNKS_FILE = PROCESSED_DIR / "text_chunks.json"
-LEXICAL_COMPONENTS_FILE = PROCESSED_DIR / "lexical_components.json"
-FILTERED_LEXICAL_FILE = PROCESSED_DIR / "filtered_lexical_components.json"
 
 
 class PipelineOrchestrator:
@@ -34,7 +33,6 @@ class PipelineOrchestrator:
     def __init__(self):
         self.steps_completed = {
             "pdf_processing": False,
-            "lexical_filtering": False,
             "db_setup": False,
             "embeddings_inserted": False,
         }
@@ -44,14 +42,9 @@ class PipelineOrchestrator:
         return (
             IMAGE_METADATA_FILE.exists()
             and TEXT_CHUNKS_FILE.exists()
-            and LEXICAL_COMPONENTS_FILE.exists()
             and IMAGES_DIR.exists()
             and len(list(IMAGES_DIR.glob("*"))) > 0
         )
-
-    def check_lexical_filtering(self) -> bool:
-        """Check if lexical components have been filtered."""
-        return FILTERED_LEXICAL_FILE.exists()
 
     def check_db_setup(self) -> bool:
         """Check if database schemas are set up."""
@@ -64,14 +57,14 @@ class PipelineOrchestrator:
                 """
                 SELECT schema_name 
                 FROM information_schema.schemata 
-                WHERE schema_name IN ('vanilla_clip', 'clip_lexical', 'clip_positional', 'clip_combined')
+                WHERE schema_name IN ('vanilla_clip', 'clip_local', 'clip_global', 'clip_combined')
                 """
             )
             schemas = [row[0] for row in cur.fetchall()]
             required_schemas = {
                 "vanilla_clip",
-                "clip_lexical",
-                "clip_positional",
+                "clip_local",
+                "clip_global",
                 "clip_combined",
             }
 
@@ -90,16 +83,16 @@ class PipelineOrchestrator:
             cur = conn.cursor()
 
             cur.execute(
-                f"""
-                SELECT COUNT(*) FROM {schema}.images
-                """
+                sql.SQL("""
+                SELECT COUNT(*) FROM {}.images
+                """).format(sql.Identifier(schema))
             )
             image_count = cur.fetchone()[0]
 
             cur.execute(
-                f"""
-                SELECT COUNT(*) FROM {schema}.text_chunks
-                """
+                sql.SQL("""
+                SELECT COUNT(*) FROM {}.text_chunks
+                """).format(sql.Identifier(schema))
             )
             chunk_count = cur.fetchone()[0]
 
@@ -114,8 +107,12 @@ class PipelineOrchestrator:
         """Step 1: Process PDF documents."""
         if not force and self.check_pdf_processing():
             print(" PDF processing already completed. Skipping...")
-            print(f"   Found {len(json.load(open(IMAGE_METADATA_FILE)))} images")
-            print(f"   Found {len(json.load(open(TEXT_CHUNKS_FILE)))} text chunks")
+            with open(IMAGE_METADATA_FILE, "r") as f:
+                images_data = json.load(f)
+            with open(TEXT_CHUNKS_FILE, "r") as f:
+                chunks_data = json.load(f)
+            print(f"   Found {len(images_data)} images")
+            print(f"   Found {len(chunks_data)} text chunks")
             return
 
         print("\n" + "=" * 80)
@@ -127,7 +124,7 @@ class PipelineOrchestrator:
             print("   Please add PDF or Word documents to process.")
             sys.exit(1)
 
-        print(f"📄 Processing documents from {RAW_DIR}...")
+        print(f"Processing documents from {RAW_DIR}...")
         result = subprocess.run(
             [sys.executable, "src/pdf_processor.py"], capture_output=False
         )
@@ -138,63 +135,14 @@ class PipelineOrchestrator:
 
         print(" PDF processing completed!")
 
-    def step_lexical_filtering(self, force: bool = False, skip_prompt: bool = False):
-        """Step 2: Filter lexical components (operator in the loop)."""
-        if not force and self.check_lexical_filtering():
-            print(" Lexical components already filtered. Skipping...")
-            return
-
-        print("\n" + "=" * 80)
-        print("STEP 2: Lexical Component Filtering (Operator in the Loop)")
-        print("=" * 80)
-
-        if not LEXICAL_COMPONENTS_FILE.exists():
-            print(" Lexical components not found. Run PDF processing first.")
-            sys.exit(1)
-
-        # Load and display current lexical components
-        with open(LEXICAL_COMPONENTS_FILE, "r") as f:
-            lexical_data = json.load(f)
-
-        print(f"\n Found {lexical_data['total_components']} unique lexical components")
-        print("\nTop 20 most frequent terms:")
-        for i, comp in enumerate(lexical_data["components"][:20], 1):
-            print(f"  {i:2d}. {comp['term']:30s} (count: {comp['count']})")
-
-        if not skip_prompt:
-            print("\n" + "-" * 80)
-            print("To filter non-relevant terms, edit src/filter_lexical_components.py")
-            print("and add terms to EXCLUDE_TERMS set, then run:")
-            print("  python3 src/filter_lexical_components.py")
-            print(
-                "\nPress Enter to continue with filtering, or 'skip' to skip this step..."
-            )
-            response = input().strip().lower()
-
-            if response == "skip":
-                print("⚠️  Skipping lexical filtering. Using all components.")
-                return
-
-        # Run filtering script
-        print("\n Running lexical component filter...")
-        result = subprocess.run(
-            [sys.executable, "src/filter_lexical_components.py"],
-            capture_output=False,
-        )
-
-        if result.returncode != 0:
-            print("  Lexical filtering failed or was skipped.")
-        else:
-            print(" Lexical filtering completed!")
-
     def step_db_setup(self, force: bool = False):
-        """Step 3: Set up database schemas."""
+        """Step 2: Set up database schemas."""
         if not force and self.check_db_setup():
             print(" Database schemas already set up. Skipping...")
             return
 
         print("\n" + "=" * 80)
-        print("STEP 3: Database Setup")
+        print("STEP 2: Database Setup")
         print("=" * 80)
 
         print("  Setting up PostgreSQL schemas and tables...")
@@ -211,17 +159,17 @@ class PipelineOrchestrator:
     def step_insert_embeddings(
         self, force: bool = False, schemas: Optional[list] = None
     ):
-        """Step 4: Insert CLIP embeddings."""
+        """Step 3: Insert CLIP embeddings."""
         if schemas is None:
             schemas = [
                 "vanilla_clip",
-                "clip_lexical",
-                "clip_positional",
+                "clip_local",
+                "clip_global",
                 "clip_combined",
             ]
 
         print("\n" + "=" * 80)
-        print("STEP 4: Insert CLIP Embeddings")
+        print("STEP 3: Insert CLIP Embeddings")
         print("=" * 80)
 
         # Check which schemas need embeddings
@@ -255,9 +203,9 @@ class PipelineOrchestrator:
         print("\n Embedding insertion completed!")
 
     def step_evaluation(self):
-        """Step 5: Run evaluation."""
+        """Step 4: Run evaluation."""
         print("\n" + "=" * 80)
-        print("STEP 5: Evaluation")
+        print("STEP 4: Evaluation")
         print("=" * 80)
 
         print(" Computing metrics and generating visualizations...")
@@ -274,14 +222,13 @@ class PipelineOrchestrator:
     def run(
         self,
         skip_pdf: bool = False,
-        skip_lexical: bool = False,
         skip_db: bool = False,
         skip_embeddings: bool = False,
         skip_eval: bool = False,
         force: bool = False,
     ):
         """Run complete pipeline with optional step skipping."""
-        print("\n" + "🚀 " + "=" * 78)
+        print("\n" + "=" * 80)
         print("MULTIMODAL ALIGNMENT PIPELINE")
         print("=" * 80 + "\n")
 
@@ -290,31 +237,25 @@ class PipelineOrchestrator:
             if not skip_pdf:
                 self.step_pdf_processing(force=force)
             else:
-                print("⏭  Skipping PDF processing")
+                print("Skipping PDF processing")
 
-            # Step 2: Lexical Filtering
-            if not skip_lexical:
-                self.step_lexical_filtering(force=force, skip_prompt=False)
-            else:
-                print("⏭  Skipping lexical filtering")
-
-            # Step 3: Database Setup
+            # Step 2: Database Setup
             if not skip_db:
                 self.step_db_setup(force=force)
             else:
-                print("⏭  Skipping database setup")
+                print("Skipping database setup")
 
-            # Step 4: Embedding Insertion
+            # Step 3: Embedding Insertion
             if not skip_embeddings:
                 self.step_insert_embeddings(force=force)
             else:
-                print("⏭  Skipping embedding insertion")
+                print("Skipping embedding insertion")
 
-            # Step 5: Evaluation
+            # Step 4: Evaluation
             if not skip_eval:
                 self.step_evaluation()
             else:
-                print("⏭  Skipping evaluation")
+                print("Skipping evaluation")
 
             print("\n" + "=" * 80)
             print(" PIPELINE COMPLETE!")
@@ -336,11 +277,6 @@ def main():
     parser.add_argument(
         "--skip-pdf", action="store_true", help="Skip PDF processing step"
     )
-    parser.add_argument(
-        "--skip-lexical",
-        action="store_true",
-        help="Skip lexical component filtering",
-    )
     parser.add_argument("--skip-db", action="store_true", help="Skip database setup")
     parser.add_argument(
         "--skip-embeddings",
@@ -359,7 +295,6 @@ def main():
     orchestrator = PipelineOrchestrator()
     orchestrator.run(
         skip_pdf=args.skip_pdf,
-        skip_lexical=args.skip_lexical,
         skip_db=args.skip_db,
         skip_embeddings=args.skip_embeddings,
         skip_eval=args.skip_eval,
