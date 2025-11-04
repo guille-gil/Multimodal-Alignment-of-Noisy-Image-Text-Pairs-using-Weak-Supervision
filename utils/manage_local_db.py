@@ -24,7 +24,7 @@ def check_docker_installed():
             text=True,
             check=True,
         )
-        print(f"✓ Docker found: {result.stdout.strip()}")
+        print(f"Docker found: {result.stdout.strip()}")
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
