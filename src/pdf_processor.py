@@ -14,7 +14,6 @@ import os
 import re
 import subprocess
 import tempfile
-from collections import Counter
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
