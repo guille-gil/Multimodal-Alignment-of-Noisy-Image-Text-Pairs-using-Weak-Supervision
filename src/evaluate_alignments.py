@@ -13,6 +13,7 @@ from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt  # type: ignore
 import numpy as np
+from psycopg2 import sql
 
 # Add parent directory to path for imports
 BASE_DIR = Path(__file__).parent.parent
@@ -21,7 +22,7 @@ sys.path.insert(0, str(BASE_DIR))
 from config import get_db_connection  # noqa: E402
 
 # Schemas to evaluate
-SCHEMAS = ["vanilla_clip", "clip_lexical", "clip_positional", "clip_combined"]
+SCHEMAS = ["vanilla_clip", "clip_local", "clip_global", "clip_combined"]
 
 # Output directory for charts (relative to project root)
 OUTPUT_DIR = BASE_DIR / "evaluation_results"
@@ -38,11 +39,14 @@ def get_image_text_pairs(schema: str) -> List[Tuple[str, str, str, str]]:
     cur = conn.cursor()
 
     cur.execute(
-        f"""
+        sql.SQL("""
         SELECT DISTINCT i.image_id, t.chunk_id, i.manual_id, i.page
-        FROM {schema}.images i
-        JOIN {schema}.text_chunks t ON i.manual_id = t.manual_id AND i.page = t.page
-        """
+        FROM {}.images i
+        JOIN {}.text_chunks t ON i.manual_id = t.manual_id AND i.page = t.page
+        """).format(
+            sql.Identifier(schema),
+            sql.Identifier(schema),
+        )
     )
 
     pairs = cur.fetchall()
@@ -59,24 +63,24 @@ def compute_similarity(image_id: str, chunk_id: str, schema: str) -> float:
 
     # Get embeddings
     cur.execute(
-        f"""
-        SELECT clip_embedding FROM {schema}.images WHERE image_id = %s
-        """,
+        sql.SQL("""
+        SELECT clip_embedding FROM {}.images WHERE image_id = %s
+        """).format(sql.Identifier(schema)),
         (image_id,),
     )
     img_embedding = cur.fetchone()[0]
 
     cur.execute(
-        f"""
-        SELECT clip_embedding FROM {schema}.text_chunks WHERE chunk_id = %s
-        """,
+        sql.SQL("""
+        SELECT clip_embedding FROM {}.text_chunks WHERE chunk_id = %s
+        """).format(sql.Identifier(schema)),
         (chunk_id,),
     )
     chunk_embedding = cur.fetchone()[0]
 
     # Compute cosine similarity (1 - distance since embeddings are normalized)
     cur.execute(
-        f"""
+        """
         SELECT 1 - (%s::vector <=> %s::vector) AS similarity
         """,
         (img_embedding, chunk_embedding),
@@ -98,23 +102,26 @@ def get_top_k_similar_chunks(
 
     # Get image embedding
     cur.execute(
-        f"""
-        SELECT clip_embedding FROM {schema}.images WHERE image_id = %s
-        """,
+        sql.SQL("""
+        SELECT clip_embedding FROM {}.images WHERE image_id = %s
+        """).format(sql.Identifier(schema)),
         (image_id,),
     )
     img_embedding = cur.fetchone()[0]
 
     # Get top K similar chunks (same manual and page)
     cur.execute(
-        f"""
+        sql.SQL("""
         SELECT chunk_id, 1 - (clip_embedding <=> %s::vector) AS similarity
-        FROM {schema}.text_chunks t
-        JOIN {schema}.images i ON t.manual_id = i.manual_id AND t.page = i.page
+        FROM {}.text_chunks t
+        JOIN {}.images i ON t.manual_id = i.manual_id AND t.page = i.page
         WHERE i.image_id = %s
         ORDER BY similarity DESC
         LIMIT %s
-        """,
+        """).format(
+            sql.Identifier(schema),
+            sql.Identifier(schema),
+        ),
         (img_embedding, image_id, k),
     )
 
@@ -132,11 +139,11 @@ def get_weak_supervision_scores(schema: str) -> Dict[str, List[float]]:
     cur = conn.cursor()
 
     cur.execute(
-        f"""
+        sql.SQL("""
         SELECT alignment_type, weak_score
-        FROM {schema}.alignments
+        FROM {}.alignments
         ORDER BY alignment_type
-        """
+        """).format(sql.Identifier(schema))
     )
 
     scores_by_type = defaultdict(list)
@@ -248,7 +255,7 @@ def plot_similarity_distributions(schemas: List[str]):
         OUTPUT_DIR / "similarity_distributions.png", dpi=300, bbox_inches="tight"
     )
     print(
-        f"✅ Saved similarity distributions to {OUTPUT_DIR / 'similarity_distributions.png'}"
+        f"Saved similarity distributions to {OUTPUT_DIR / 'similarity_distributions.png'}"
     )
     plt.close()
 
@@ -263,11 +270,11 @@ def plot_top_k_comparison():
             accuracies = compute_top_k_accuracy(schema, k_values)
             schema_accuracies[schema] = accuracies
         except Exception as e:
-            print(f"⚠️  Error evaluating {schema}: {e}")
+            print(f"Warning: Error evaluating {schema}: {e}")
             continue
 
     if not schema_accuracies:
-        print("⚠️  No schemas available for comparison")
+        print("Warning: No schemas available for comparison")
         return
 
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -294,13 +301,13 @@ def plot_top_k_comparison():
 
     plt.tight_layout()
     plt.savefig(OUTPUT_DIR / "top_k_comparison.png", dpi=300, bbox_inches="tight")
-    print(f"✅ Saved Top-K comparison to {OUTPUT_DIR / 'top_k_comparison.png'}")
+    print(f"Saved Top-K comparison to {OUTPUT_DIR / 'top_k_comparison.png'}")
     plt.close()
 
 
 def plot_weak_supervision_scores():
     """Plot distribution of weak supervision alignment scores."""
-    schemas_with_alignments = ["clip_lexical", "clip_positional", "clip_combined"]
+    schemas_with_alignments = ["clip_local", "clip_global", "clip_combined"]
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
@@ -323,7 +330,7 @@ def plot_weak_supervision_scores():
             axes[idx].legend()
             axes[idx].grid(axis="y", alpha=0.3)
         except Exception as e:
-            print(f"⚠️  Error plotting weak supervision for {schema}: {e}")
+            print(f"Warning: Error plotting weak supervision for {schema}: {e}")
             axes[idx].text(0.5, 0.5, "No data", ha="center", va="center")
 
     plt.tight_layout()
@@ -331,7 +338,7 @@ def plot_weak_supervision_scores():
         OUTPUT_DIR / "weak_supervision_scores.png", dpi=300, bbox_inches="tight"
     )
     print(
-        f"✅ Saved weak supervision scores to {OUTPUT_DIR / 'weak_supervision_scores.png'}"
+        f"Saved weak supervision scores to {OUTPUT_DIR / 'weak_supervision_scores.png'}"
     )
     plt.close()
 
@@ -345,7 +352,7 @@ def print_metrics_report():
     all_metrics = {}
 
     for schema in SCHEMAS:
-        print(f"\n📊 Schema: {schema.upper().replace('_', ' ')}")
+        print(f"\nSchema: {schema.upper().replace('_', ' ')}")
         print("-" * 80)
 
         try:
@@ -353,7 +360,7 @@ def print_metrics_report():
             conn = get_db_connection()
             cur = conn.cursor()
             cur.execute(
-                f"""
+                """
                 SELECT COUNT(*) FROM information_schema.tables 
                 WHERE table_schema = %s AND table_name = 'images'
                 """,
@@ -364,7 +371,7 @@ def print_metrics_report():
             conn.close()
 
             if not exists:
-                print("  ⚠️  Schema not found in database")
+                print("  Warning: Schema not found in database")
                 continue
 
             # Compute metrics
@@ -385,11 +392,11 @@ def print_metrics_report():
             )
 
             # Weak supervision stats (if applicable)
-            if schema in ["clip_lexical", "clip_positional", "clip_combined"]:
+            if schema in ["clip_local", "clip_global", "clip_combined"]:
                 try:
                     scores_by_type = get_weak_supervision_scores(schema)
                     if scores_by_type:
-                        print(f"  Weak Supervision Alignments:")
+                        print("  Weak Supervision Alignments:")
                         for align_type, scores in scores_by_type.items():
                             print(
                                 f"    - {align_type}: {len(scores)} pairs, "
@@ -406,7 +413,7 @@ def print_metrics_report():
             }
 
         except Exception as e:
-            print(f"  ❌ Error evaluating schema: {e}")
+            print(f"  Error evaluating schema: {e}")
             continue
 
     # Save metrics to JSON
@@ -414,7 +421,7 @@ def print_metrics_report():
     with open(metrics_file, "w") as f:
         json.dump(all_metrics, f, indent=2)
 
-    print(f"\n✅ Metrics saved to {metrics_file}")
+    print(f"\nMetrics saved to {metrics_file}")
     print("\n" + "=" * 80)
 
 
@@ -427,15 +434,15 @@ def main():
         print_metrics_report()
 
         # Generate visualizations
-        print("\n📈 Generating visualizations...")
+        print("\nGenerating visualizations...")
         plot_similarity_distributions(SCHEMAS)
         plot_top_k_comparison()
         plot_weak_supervision_scores()
 
-        print(f"\n✅ Evaluation complete! Results saved to {OUTPUT_DIR}/")
+        print(f"\nEvaluation complete! Results saved to {OUTPUT_DIR}/")
 
     except Exception as e:
-        print(f"❌ Evaluation failed: {e}")
+        print(f"Evaluation failed: {e}")
         raise
 
 
