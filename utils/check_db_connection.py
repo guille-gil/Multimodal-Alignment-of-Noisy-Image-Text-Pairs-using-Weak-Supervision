@@ -129,15 +129,15 @@ def check_connection():
         print("Project Schema Status:")
         required_schemas = {
             "vanilla_clip",
-            "clip_lexical",
-            "clip_positional",
+            "clip_local",
+            "clip_global",
             "clip_combined",
         }
         cur.execute(
             """
             SELECT schema_name 
             FROM information_schema.schemata 
-            WHERE schema_name IN ('vanilla_clip', 'clip_lexical', 'clip_positional', 'clip_combined')
+            WHERE schema_name IN ('vanilla_clip', 'clip_local', 'clip_global', 'clip_combined')
             ORDER BY schema_name;
             """
         )
@@ -156,7 +156,7 @@ def check_connection():
                     (schema,),
                 )
                 tables = [row[0] for row in cur.fetchall()]
-                status = "✅" if tables else "⚠️  (empty)"
+                status = "OK" if tables else "Warning: (empty)"
                 print(f"   {status} {schema}", end="")
                 if tables:
                     print(f" - Tables: {', '.join(tables)}")
