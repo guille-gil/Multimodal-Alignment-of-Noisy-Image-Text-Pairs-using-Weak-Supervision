@@ -46,10 +46,10 @@ python3 setup_vector_db.py
 ```
 
 This creates 4 schemas:
-- **vanilla_clip**: Standard CLIP embeddings without weak supervision
-- **clip_lexical**: CLIP + lexical component weak supervision
-- **clip_positional**: CLIP + positional (bbox) weak supervision
-- **clip_combined**: CLIP + both lexical and positional weak supervision
+- **vanilla_clip**: Pure CLIP embeddings (no weak supervision)
+- **clip_local**: CLIP + local proximity (bounding box proximity on same page)
+- **clip_global**: CLIP + global proximity (page distance across document)
+- **clip_combined**: CLIP + both local and global proximity
 
 Each schema contains:
 - `images` table: Image metadata and CLIP embeddings
@@ -96,8 +96,8 @@ python3 insert_clip_embeddings.py
 
 # Or insert into specific schema
 python3 insert_clip_embeddings.py vanilla_clip
-python3 insert_clip_embeddings.py clip_lexical
-python3 insert_clip_embeddings.py clip_positional
+python3 insert_clip_embeddings.py clip_local
+python3 insert_clip_embeddings.py clip_global
 python3 insert_clip_embeddings.py clip_combined
 ```
 
@@ -126,7 +126,7 @@ python3 insert_clip_embeddings.py clip_combined
 - `image_id`: Reference to image
 - `chunk_id`: Reference to text chunk
 - `weak_score`: Confidence score (0-1)
-- `alignment_type`: 'lexical', 'positional', or 'combined'
+- `alignment_type`: 'local', 'global', or 'combined'
 
 ## Query Examples
 
