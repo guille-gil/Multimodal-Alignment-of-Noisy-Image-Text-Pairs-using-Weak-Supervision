@@ -7,21 +7,19 @@ any data or schema. Useful for troubleshooting connection issues.
 
 import sys
 from pathlib import Path
-from dotenv import load_dotenv
-import os
 
 # Add parent directory to path for imports
 BASE_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-load_dotenv()
-
-# Database connection parameters
-DB_HOST = os.getenv("DB_HOST", "bachata.service.rug.nl")
-DB_NAME = os.getenv("DB_NAME", "aixpert")
-DB_USER = os.getenv("DB_USER", "pnumber")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
+from config import (
+    DB_HOST,
+    DB_NAME,
+    DB_PASSWORD,
+    DB_PORT,
+    DB_USER,
+    get_db_connection,
+)
 
 
 def check_connection():
@@ -54,14 +52,8 @@ def check_connection():
         return False
 
     try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            connect_timeout=10,
-        )
+        # Use centralized connection function with connect_timeout
+        conn = get_db_connection(connect_timeout=10)
         print("Connection successful!")
         print()
 
