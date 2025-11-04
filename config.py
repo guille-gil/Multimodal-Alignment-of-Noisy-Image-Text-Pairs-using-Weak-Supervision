@@ -2,7 +2,18 @@
 Configuration file for the PDF processing pipeline.
 """
 
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None  # Will raise error when get_db_connection is called
 
 # Base directories
 BASE_DIR = Path(__file__).parent
@@ -45,3 +56,52 @@ SPACY_MODEL = "en_core_web_sm"
 
 # Output format
 OUTPUT_FORMAT = "json"
+
+# Database connection parameters
+DB_HOST = os.getenv("DB_HOST")
+DB_NAME = os.getenv("DB_NAME")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_PORT = int(os.getenv("DB_PORT", "5432"))
+
+# CLIP model configuration
+CLIP_MODEL = os.getenv("CLIP_MODEL", "ViT-B/32")
+CLIP_DIM = int(os.getenv("CLIP_DIM", "512"))
+
+
+def get_db_connection(**kwargs):
+    """
+    Get a PostgreSQL database connection.
+
+    Args:
+        **kwargs: Additional connection parameters (e.g., connect_timeout)
+
+    Returns:
+        psycopg2.connection: Database connection object
+
+    Raises:
+        ValueError: If required database environment variables are not set
+        ImportError: If psycopg2 is not installed
+    """
+    if psycopg2 is None:
+        raise ImportError(
+            "psycopg2 is not installed. Install with: pip install psycopg2-binary"
+        )
+
+    if not DB_HOST:
+        raise ValueError("DB_HOST environment variable is not set")
+    if not DB_NAME:
+        raise ValueError("DB_NAME environment variable is not set")
+    if not DB_USER:
+        raise ValueError("DB_USER environment variable is not set")
+    if not DB_PASSWORD:
+        raise ValueError("DB_PASSWORD environment variable is not set")
+
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        **kwargs,
+    )
