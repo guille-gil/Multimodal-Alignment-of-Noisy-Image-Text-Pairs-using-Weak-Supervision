@@ -48,23 +48,17 @@ python3 src/run_pipeline.py --skip-db --skip-embeddings
 python3 src/pdf_processor.py
 ```
 
-### 2. Filter Lexical Components
-```bash
-# Edit src/filter_lexical_components.py (add terms to EXCLUDE_TERMS)
-python3 src/filter_lexical_components.py
-```
-
-### 3. Setup Database
+### 2. Setup Database
 ```bash
 python3 src/setup_vector_db.py
 ```
 
-### 4. Insert Embeddings
+### 3. Insert Embeddings
 ```bash
 python3 src/insert_clip_embeddings.py
 ```
 
-### 5. Evaluate
+### 4. Evaluate
 ```bash
 python3 src/evaluate_alignments.py
 ```
@@ -77,16 +71,9 @@ python3 src/evaluate_alignments.py
 python3 src/run_pipeline.py --skip-db --skip-embeddings --skip-eval
 ```
 
-### Re-filter Lexical Components
-```bash
-# Edit src/filter_lexical_components.py
-python3 src/filter_lexical_components.py
-python3 src/run_pipeline.py --skip-pdf --skip-db
-```
-
 ### Re-compute Embeddings
 ```bash
-python3 src/run_pipeline.py --skip-pdf --skip-lexical --skip-db
+python3 src/run_pipeline.py --skip-pdf --skip-db
 ```
 
 ## Output Locations
