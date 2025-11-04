@@ -14,7 +14,7 @@ def test_imports():
     try:
         import fitz
 
-        print("✓ PyMuPDF (fitz) imported successfully")
+        print("PyMuPDF (fitz) imported successfully")
     except ImportError as e:
         print(f"✗ PyMuPDF import failed: {e}")
         return False
@@ -22,7 +22,7 @@ def test_imports():
     try:
         import pdfplumber
 
-        print("✓ pdfplumber imported successfully")
+        print("pdfplumber imported successfully")
     except ImportError as e:
         print(f"✗ pdfplumber import failed: {e}")
         return False
@@ -30,7 +30,7 @@ def test_imports():
     try:
         import spacy
 
-        print("✓ spaCy imported successfully")
+        print("spaCy imported successfully")
     except ImportError as e:
         print(f"✗ spaCy import failed: {e}")
         return False
@@ -38,7 +38,7 @@ def test_imports():
     try:
         import numpy as np
 
-        print("✓ NumPy imported successfully")
+        print("NumPy imported successfully")
     except ImportError as e:
         print(f"✗ NumPy import failed: {e}")
         return False
@@ -46,7 +46,7 @@ def test_imports():
     try:
         from PIL import Image
 
-        print("✓ Pillow imported successfully")
+        print("Pillow imported successfully")
     except ImportError as e:
         print(f"✗ Pillow import failed: {e}")
         return False
@@ -54,7 +54,7 @@ def test_imports():
     try:
         from tqdm import tqdm
 
-        print("✓ tqdm imported successfully")
+        print("tqdm imported successfully")
     except ImportError as e:
         print(f"✗ tqdm import failed: {e}")
         return False
@@ -70,12 +70,12 @@ def test_spacy_model():
         import spacy
 
         nlp = spacy.load("en_core_web_sm")
-        print("✓ English spaCy model loaded successfully")
+        print("English spaCy model loaded successfully")
 
         # Test basic functionality
         doc = nlp("This is a test sentence.")
         tokens = [token.text for token in doc]
-        print(f"✓ Tokenization test: {tokens}")
+        print(f"Tokenization test: {tokens}")
 
         return True
     except OSError:
@@ -103,7 +103,7 @@ def test_directory_structure():
     all_exist = True
     for dir_path in required_dirs:
         if dir_path.exists():
-            print(f"✓ {dir_path} exists")
+            print(f"{dir_path} exists")
         else:
             print(f"✗ {dir_path} missing")
             all_exist = False
@@ -118,11 +118,11 @@ def test_pdf_processor():
     try:
         from src.pdf_processor import PDFProcessor
 
-        print("✓ PDFProcessor imported successfully")
+        print("PDFProcessor imported successfully")
 
         # Test initialization
         processor = PDFProcessor("data/raw/manuals", "data/processed")
-        print("✓ PDFProcessor initialized successfully")
+        print("PDFProcessor initialized successfully")
 
         return True
     except Exception as e:
@@ -158,7 +158,7 @@ def main():
     total = len(results)
 
     if passed == total:
-        print(f"✓ All {total} tests passed! The pipeline is ready to use.")
+        print(f"All {total} tests passed! The pipeline is ready to use.")
         print("\nTo process PDFs:")
         print("1. Place PDF files in data/raw/manuals/")
         print("2. Run: python src/pdf_processor.py")
