@@ -116,7 +116,7 @@ def test_pdf_processor():
     print("\nTesting PDF processor import...")
 
     try:
-        from pdf_processor import PDFProcessor
+        from src.pdf_processor import PDFProcessor
 
         print("✓ PDFProcessor imported successfully")
 
@@ -161,7 +161,7 @@ def main():
         print(f"✓ All {total} tests passed! The pipeline is ready to use.")
         print("\nTo process PDFs:")
         print("1. Place PDF files in data/raw/manuals/")
-        print("2. Run: python pdf_processor.py")
+        print("2. Run: python src/pdf_processor.py")
     else:
         print(f"✗ {total - passed} out of {total} tests failed.")
         print("Please fix the issues above before proceeding.")
