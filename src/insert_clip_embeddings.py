@@ -1,27 +1,31 @@
 """
 Insert CLIP embeddings into PostgreSQL vector database.
 
-Supports all 4 schemas and computes weak supervision alignments.
+Supports 4 schemas:
+- vanilla_clip: Pure CLIP embeddings (no weak supervision)
+- clip_local: CLIP + local proximity (bounding box proximity on same page)
+- clip_global: CLIP + global proximity (page distance across document)
+- clip_combined: CLIP + both local and global proximity
 """
 
 import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 import numpy as np
+from psycopg2 import sql
 from psycopg2.extras import execute_values
 
 # Add parent directory to path for imports
 BASE_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from config import CLIP_DIM, CLIP_MODEL, get_db_connection
+from config import CLIP_DIM, CLIP_MODEL, get_db_connection  # noqa: E402
 
 IMAGE_METADATA_FILE = BASE_DIR / "data/processed/image_metadata.json"
 TEXT_CHUNKS_FILE = BASE_DIR / "data/processed/text_chunks.json"
-LEXICAL_COMPONENTS_FILE = BASE_DIR / "data/processed/filtered_lexical_components.json"
 IMAGES_DIR = BASE_DIR / "data/processed/images"
 
 
@@ -75,7 +79,7 @@ def load_clip_model():
     tokenizer = open_clip.get_tokenizer(model_name)
     model.eval()
 
-    print(f"✅ OpenCLIP model loaded on {device}")
+    print(f"OpenCLIP model loaded on {device}")
     return model, preprocess, tokenizer, device
 
 
@@ -140,23 +144,12 @@ def compute_text_embedding(text: str, model, tokenizer, device):
     return embedding[0].astype(np.float32)
 
 
-def compute_lexical_alignment(text_chunk: Dict, lexical_components: List[str]) -> float:
-    """Compute weak supervision score based on lexical component overlap."""
-    if not lexical_components:
-        return 0.0
+def compute_local_proximity(image: Dict, chunk: Dict) -> float:
+    """
+    Compute weak supervision score based on local proximity (bounding box on same page).
 
-    chunk_text_lower = text_chunk["text"].lower()
-    matching_terms = sum(1 for term in lexical_components if term in chunk_text_lower)
-    # Normalize by lexical component count (simple heuristic)
-    # Higher score if more lexical terms appear in the chunk
-    score = min(
-        1.0, matching_terms / max(len(lexical_components) * 0.1, 1)
-    )  # Adjusted normalization
-    return score
-
-
-def compute_positional_alignment(image: Dict, chunk: Dict) -> float:
-    """Compute weak supervision score based on bounding box proximity."""
+    Uses IoU (Intersection over Union) if boxes overlap, otherwise distance-based score.
+    """
     if not image.get("bbox") or not chunk.get("bbox"):
         return 0.0
 
@@ -209,17 +202,44 @@ def compute_positional_alignment(image: Dict, chunk: Dict) -> float:
     return iou
 
 
-def insert_embeddings(
-    schema: str, use_lexical: bool = False, use_positional: bool = False
-):
+def compute_global_proximity(image: Dict, chunk: Dict) -> float:
+    """
+    Compute weak supervision score based on global proximity (page distance).
+
+    Scores based on how close pages are in the document. Same page = 1.0,
+    decreases with page distance.
+    """
+    img_page = image.get("page")
+    chunk_page = chunk.get("page")
+
+    if img_page is None or chunk_page is None:
+        return 0.0
+
+    # Same page
+    if img_page == chunk_page:
+        return 1.0
+
+    # Different pages - compute distance-based score
+    page_distance = abs(img_page - chunk_page)
+
+    # Exponential decay: score decreases with distance
+    # Adjust decay rate based on typical document size
+    # For manual with ~100 pages, distance of 10 pages ≈ 0.37 score
+    decay_rate = 0.1  # Adjust this to control how quickly score decreases
+    score = np.exp(-decay_rate * page_distance)
+
+    return float(score)
+
+
+def insert_embeddings(schema: str, use_local: bool = False, use_global: bool = False):
     """Insert CLIP embeddings into specified schema."""
     # Load data
     if not IMAGE_METADATA_FILE.exists():
-        print(f"❌ Error: {IMAGE_METADATA_FILE} not found. Run pdf_processor.py first.")
+        print(f"Error: {IMAGE_METADATA_FILE} not found. Run pdf_processor.py first.")
         return
 
     if not TEXT_CHUNKS_FILE.exists():
-        print(f"❌ Error: {TEXT_CHUNKS_FILE} not found. Run pdf_processor.py first.")
+        print(f"Error: {TEXT_CHUNKS_FILE} not found. Run pdf_processor.py first.")
         return
 
     with open(IMAGE_METADATA_FILE, "r") as f:
@@ -228,38 +248,20 @@ def insert_embeddings(
     with open(TEXT_CHUNKS_FILE, "r") as f:
         chunks = json.load(f)
 
-    lexical_components = []
-    if use_lexical:
-        if LEXICAL_COMPONENTS_FILE.exists():
-            with open(LEXICAL_COMPONENTS_FILE, "r") as f:
-                lexical_data = json.load(f)
-                lexical_components = [
-                    c["term"] for c in lexical_data.get("components", [])
-                ]
-        else:
-            # Fallback to unfiltered lexical components
-            lexical_file = Path("data/processed/lexical_components.json")
-            if lexical_file.exists():
-                with open(lexical_file, "r") as f:
-                    lexical_data = json.load(f)
-                    lexical_components = [
-                        c["term"] for c in lexical_data.get("components", [])
-                    ]
-
     # Load OpenCLIP model
     try:
         model, preprocess, tokenizer, device = load_clip_model()
     except ImportError as e:
-        print(f"⚠️  {e}")
-        print("⚠️  Install with: pip install open-clip-torch")
-        print("⚠️  Using placeholder embeddings.")
+        print(f"Warning: {e}")
+        print("Install with: pip install open-clip-torch")
+        print("Using placeholder embeddings.")
         model = None
         preprocess = None
         tokenizer = None
         device = None
     except Exception as e:
-        print(f"⚠️  Error loading CLIP model: {e}")
-        print("⚠️  Using placeholder embeddings.")
+        print(f"Warning: Error loading CLIP model: {e}")
+        print("Using placeholder embeddings.")
         model = None
         preprocess = None
         tokenizer = None
@@ -281,7 +283,7 @@ def insert_embeddings(
                     )
                 except Exception as e:
                     print(
-                        f"⚠️  Error computing embedding for {img.get('filename')}: {e}"
+                        f"Warning: Error computing embedding for {img.get('filename')}: {e}"
                     )
                     # Fallback to placeholder
                     embedding = np.random.rand(CLIP_DIM).astype(np.float32)
@@ -305,16 +307,16 @@ def insert_embeddings(
 
         execute_values(
             cur,
-            f"""
-            INSERT INTO {schema}.images 
+            sql.SQL("""
+            INSERT INTO {}.images 
             (image_id, manual_id, page, bbox, bbox_source, caption, filename, image_type, clip_embedding)
             VALUES %s
             ON CONFLICT (image_id) DO UPDATE SET
                 clip_embedding = EXCLUDED.clip_embedding
-            """,
+            """).format(sql.Identifier(schema)),
             image_records,
         )
-        print(f"✅ Inserted {len(image_records)} images into {schema}")
+        print(f"Inserted {len(image_records)} images into {schema}")
 
         # Insert text chunks
         chunk_records = []
@@ -326,7 +328,7 @@ def insert_embeddings(
                     )
                 except Exception as e:
                     print(
-                        f"⚠️  Error computing embedding for chunk {chunk.get('chunk_id')}: {e}"
+                        f"Warning: Error computing embedding for chunk {chunk.get('chunk_id')}: {e}"
                     )
                     # Fallback to placeholder
                     embedding = np.random.rand(CLIP_DIM).astype(np.float32)
@@ -347,48 +349,50 @@ def insert_embeddings(
 
         execute_values(
             cur,
-            f"""
-            INSERT INTO {schema}.text_chunks
+            sql.SQL("""
+            INSERT INTO {}.text_chunks
             (chunk_id, manual_id, page, bbox, text, clip_embedding)
             VALUES %s
             ON CONFLICT (chunk_id) DO UPDATE SET
                 clip_embedding = EXCLUDED.clip_embedding
-            """,
+            """).format(sql.Identifier(schema)),
             chunk_records,
         )
-        print(f"✅ Inserted {len(chunk_records)} text chunks into {schema}")
+        print(f"Inserted {len(chunk_records)} text chunks into {schema}")
 
         # Compute and insert alignments if needed
-        if use_lexical or use_positional:
+        if use_local or use_global:
             alignment_records = []
 
             for img in images:
-                img_page = img.get("page")
                 img_manual = img["manual_id"]
 
                 for chunk in chunks:
                     if chunk["manual_id"] != img_manual:
                         continue
-                    if chunk.get("page") != img_page:
-                        continue  # Same page alignment only
 
                     scores = []
                     alignment_types = []
 
-                    if use_lexical:
-                        lex_score = compute_lexical_alignment(chunk, lexical_components)
-                        if lex_score > 0.05:  # Threshold to avoid noise
-                            scores.append(lex_score)
-                            alignment_types.append("lexical")
+                    if use_local:
+                        # Local proximity: only check same-page pairs for bounding box proximity
+                        img_page = img.get("page")
+                        chunk_page = chunk.get("page")
+                        if img_page == chunk_page:
+                            local_score = compute_local_proximity(img, chunk)
+                            if local_score > 0.05:  # Threshold to avoid noise
+                                scores.append(local_score)
+                                alignment_types.append("local")
 
-                    if use_positional:
-                        pos_score = compute_positional_alignment(img, chunk)
-                        if pos_score > 0.05:  # Threshold to avoid noise
-                            scores.append(pos_score)
-                            alignment_types.append("positional")
+                    if use_global:
+                        # Global proximity: check all pairs, score by page distance
+                        global_score = compute_global_proximity(img, chunk)
+                        if global_score > 0.05:  # Threshold to avoid noise
+                            scores.append(global_score)
+                            alignment_types.append("global")
 
                     # Combined score
-                    if use_lexical and use_positional and len(scores) == 2:
+                    if use_local and use_global and len(scores) == 2:
                         combined_score = (scores[0] + scores[1]) / 2  # Average
                         if combined_score > 0.1:  # Combined threshold
                             alignment_records.append(
@@ -409,24 +413,24 @@ def insert_embeddings(
             if alignment_records:
                 execute_values(
                     cur,
-                    f"""
-                    INSERT INTO {schema}.alignments
+                    sql.SQL("""
+                    INSERT INTO {}.alignments
                     (image_id, chunk_id, weak_score, alignment_type)
                     VALUES %s
                     ON CONFLICT (image_id, chunk_id, alignment_type) DO UPDATE
                     SET weak_score = EXCLUDED.weak_score
-                    """,
+                    """).format(sql.Identifier(schema)),
                     alignment_records,
                 )
-                print(f"✅ Inserted {len(alignment_records)} alignments into {schema}")
+                print(f"Inserted {len(alignment_records)} alignments into {schema}")
 
         conn.commit()
         cur.close()
         conn.close()
-        print(f"\n✅ Successfully populated {schema} schema")
+        print(f"\nSuccessfully populated {schema} schema")
 
     except Exception as e:
-        print(f"❌ Error inserting embeddings: {e}")
+        print(f"Error inserting embeddings: {e}")
         raise
 
 
@@ -435,28 +439,28 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         schema = sys.argv[1]
         if schema == "vanilla_clip":
-            insert_embeddings("vanilla_clip", use_lexical=False, use_positional=False)
-        elif schema == "clip_lexical":
-            insert_embeddings("clip_lexical", use_lexical=True, use_positional=False)
-        elif schema == "clip_positional":
-            insert_embeddings("clip_positional", use_lexical=False, use_positional=True)
+            insert_embeddings("vanilla_clip", use_local=False, use_global=False)
+        elif schema == "clip_local":
+            insert_embeddings("clip_local", use_local=True, use_global=False)
+        elif schema == "clip_global":
+            insert_embeddings("clip_global", use_local=False, use_global=True)
         elif schema == "clip_combined":
-            insert_embeddings("clip_combined", use_lexical=True, use_positional=True)
+            insert_embeddings("clip_combined", use_local=True, use_global=True)
         else:
             print(f"Unknown schema: {schema}")
             print(
-                "Available schemas: vanilla_clip, clip_lexical, clip_positional, clip_combined"
+                "Available schemas: vanilla_clip, clip_local, clip_global, clip_combined"
             )
     else:
         # Populate all schemas
         print("Inserting into vanilla_clip...")
-        insert_embeddings("vanilla_clip", use_lexical=False, use_positional=False)
+        insert_embeddings("vanilla_clip", use_local=False, use_global=False)
 
-        print("\nInserting into clip_lexical...")
-        insert_embeddings("clip_lexical", use_lexical=True, use_positional=False)
+        print("\nInserting into clip_local...")
+        insert_embeddings("clip_local", use_local=True, use_global=False)
 
-        print("\nInserting into clip_positional...")
-        insert_embeddings("clip_positional", use_lexical=False, use_positional=True)
+        print("\nInserting into clip_global...")
+        insert_embeddings("clip_global", use_local=False, use_global=True)
 
         print("\nInserting into clip_combined...")
-        insert_embeddings("clip_combined", use_lexical=True, use_positional=True)
+        insert_embeddings("clip_combined", use_local=True, use_global=True)
