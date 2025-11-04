@@ -207,6 +207,20 @@ marimo/_lsp/
 __marimo__/
 
 # =============================================================================
+# Docker Local Database
+# =============================================================================
+# Docker volumes (if storing in project directory - optional)
+docker-data/
+postgres_data/
+
+# Docker Compose override files (user-specific configurations)
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Docker logs
+docker-compose.log
+
+# =============================================================================
 # SENSITIVE DATA PROTECTION - MAINTENANCE MANUALS
 # =============================================================================
 # NEVER commit any maintenance manuals or processed data to version control
