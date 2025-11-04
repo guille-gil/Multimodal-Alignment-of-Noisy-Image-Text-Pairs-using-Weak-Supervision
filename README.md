@@ -144,7 +144,7 @@ python3 src/insert_clip_embeddings.py vanilla_clip
 
 **Note:** First run will download the CLIP model (cached locally afterward).
 
-### Step 5: Evaluation
+### Step 4: Evaluation
 
 Computes metrics and generates visualizations.
 
