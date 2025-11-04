@@ -4,30 +4,21 @@ Insert CLIP embeddings into PostgreSQL vector database.
 Supports all 4 schemas and computes weak supervision alignments.
 """
 
-import psycopg2
-from psycopg2.extras import execute_values
-from dotenv import load_dotenv
 import json
-from pathlib import Path
-import numpy as np
-from typing import List, Dict
 import os
+import sys
+from pathlib import Path
+from typing import Dict, List
 
-load_dotenv()
+import numpy as np
+from psycopg2.extras import execute_values
 
-# DB parameters
-DB_HOST = os.getenv("DB_HOST", "bachata.service.rug.nl")
-DB_NAME = os.getenv("DB_NAME", "aixpert")
-DB_USER = os.getenv("DB_USER", "pnumber")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
-
-# CLIP model configuration
-CLIP_MODEL = os.getenv("CLIP_MODEL", "ViT-B/32")
-CLIP_DIM = int(os.getenv("CLIP_DIM", "512"))
-
-# Paths (relative to project root)
+# Add parent directory to path for imports
 BASE_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(BASE_DIR))
+
+from config import CLIP_DIM, CLIP_MODEL, get_db_connection
+
 IMAGE_METADATA_FILE = BASE_DIR / "data/processed/image_metadata.json"
 TEXT_CHUNKS_FILE = BASE_DIR / "data/processed/text_chunks.json"
 LEXICAL_COMPONENTS_FILE = BASE_DIR / "data/processed/filtered_lexical_components.json"
@@ -101,8 +92,12 @@ def compute_image_embedding(image_path: Path, model, preprocess, device):
     Returns:
         Normalized embedding vector (np.float32)
     """
-    from PIL import Image
-    import torch
+    # Conditional imports for optional dependencies
+    try:
+        from PIL import Image
+        import torch
+    except ImportError:
+        raise ImportError("PIL and torch are required for image embeddings")
 
     image = Image.open(image_path).convert("RGB")
     image_tensor = preprocess(image).unsqueeze(0).to(device)
@@ -128,7 +123,11 @@ def compute_text_embedding(text: str, model, tokenizer, device):
     Returns:
         Normalized embedding vector (np.float32)
     """
-    import torch
+    # Conditional import for optional dependency
+    try:
+        import torch
+    except ImportError:
+        raise ImportError("torch is required for text embeddings")
 
     # Truncate text if too long (CLIP has a max token limit)
     text_tokens = tokenizer([text]).to(device)
@@ -267,13 +266,7 @@ def insert_embeddings(
         device = None
 
     try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-        )
+        conn = get_db_connection()
         cur = conn.cursor()
 
         # Insert images
@@ -438,8 +431,6 @@ def insert_embeddings(
 
 
 if __name__ == "__main__":
-    import sys
-
     # Allow specifying which schema to populate
     if len(sys.argv) > 1:
         schema = sys.argv[1]
