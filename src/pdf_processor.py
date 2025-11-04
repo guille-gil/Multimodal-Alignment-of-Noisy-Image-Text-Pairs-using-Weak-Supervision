@@ -75,7 +75,6 @@ class PDFProcessor:
         # Storage for extracted data
         self.image_metadata = []
         self.text_chunks = []
-        self.lexical_components = set()
 
     def filter_invalid_bboxes(self, images):
         """Remove or ignore images that have zero bounding boxes."""
@@ -163,7 +162,7 @@ class PDFProcessor:
 
         try:
             nlp = spacy.load(model_name)
-            print(f"✓ Loaded spaCy model: {model_name}")
+            print(f"Loaded spaCy model: {model_name}")
             return nlp
         except OSError:
             print(f"Warning: {model_name} not found. Trying to download...")
@@ -173,7 +172,7 @@ class PDFProcessor:
                     check=True,
                 )
                 nlp = spacy.load(model_name)
-                print(f"✓ Downloaded and loaded: {model_name}")
+                print(f"Downloaded and loaded: {model_name}")
                 return nlp
             except Exception as e:
                 print(f"Failed to load {model_name}: {e}")
@@ -245,14 +244,12 @@ class PDFProcessor:
         # Reset previous results to avoid duplication
         self.image_metadata = []
         self.text_chunks = []
-        self.lexical_components = set()
         self.global_image_counter = 0
         self.global_chunk_counter = 0
 
         for file in [
             "image_metadata.json",
             "text_chunks.json",
-            "lexical_components.json",
         ]:
             path = self.output_dir / file
             if path.exists():
@@ -932,54 +929,6 @@ class PDFProcessor:
                     # No number found, assign to first available image
                     doc_images[0]["caption"] = caption["text"]
 
-    def preprocess_text(self, text: str) -> str:
-        """Preprocess text for lexical component extraction."""
-        # Remove hyphenation across lines
-        text = re.sub(r"-\s*\n\s*", "", text)
-
-        # Normalize whitespace
-        text = re.sub(r"\s+", " ", text)
-
-        # Remove page numbers and headers/footers (basic patterns)
-        text = re.sub(r"^\d+\s*$", "", text, flags=re.MULTILINE)
-
-        return text.strip()
-
-    def extract_lexical_components(self, text: str) -> List[str]:
-        """Extract lexical components from text using spaCy - nouns only for visual entities."""
-        if not self.nlp:
-            return []
-
-        doc = self.nlp(text)
-        components = []
-
-        for token in doc:
-            # Extract only nouns (visual entities that can appear in images)
-            # Apply stricter filtering to catch artifacts
-            lemma_lower = token.lemma_.lower().strip()
-
-            # Filter criteria:
-            # - Must be a noun
-            # - Not a stop word
-            # - Not punctuation
-            # - Minimum length of 4 characters (to filter artifacts like "pken", "proce", "visionplaa")
-            # - Must be alphanumeric (no special characters except hyphens for compound words)
-            # - Must have at least one letter (not just digits)
-            if (
-                token.pos_ == "NOUN"
-                and not token.is_stop
-                and not token.is_punct
-                and len(lemma_lower) >= 4
-                and (
-                    lemma_lower.replace("-", "").replace("_", "").isalnum()
-                    or "-" in lemma_lower
-                )
-                and any(c.isalpha() for c in lemma_lower)  # At least one letter
-            ):
-                components.append(lemma_lower)
-
-        return components
-
     def save_extracted_data(self) -> None:
         """Save all extracted data to JSON files."""
         # Step 1: Filter images with zero bboxes before saving
@@ -993,33 +942,8 @@ class PDFProcessor:
         with open(self.output_dir / "text_chunks.json", "w") as f:
             json.dump(self.text_chunks, f, indent=2)
 
-        # Extract and save lexical components
-        all_text = " ".join([chunk["text"] for chunk in self.text_chunks])
-        processed_text = self.preprocess_text(all_text)
-        lexical_components = self.extract_lexical_components(processed_text)
-
-        # Count frequencies and sort by frequency (descending), then alphabetically
-        component_counts = Counter(lexical_components)
-
-        # Create list of (term, count) tuples, sorted by frequency (desc), then alphabetically
-        sorted_components = sorted(
-            component_counts.items(),
-            key=lambda x: (-x[1], x[0]),  # Sort by -count (desc), then by term (asc)
-        )
-
-        lexical_data = {
-            "total_components": len(sorted_components),
-            "total_occurrences": sum(component_counts.values()),
-            "components": [
-                {"term": term, "count": count} for term, count in sorted_components
-            ],
-        }
-
-        with open(self.output_dir / "lexical_components.json", "w") as f:
-            json.dump(lexical_data, f, indent=2)
-
         print(
-            f"Saved {len(self.image_metadata)} images, {len(self.text_chunks)} text chunks, and {len(sorted_components)} unique lexical components (nouns only)"
+            f"Saved {len(self.image_metadata)} images and {len(self.text_chunks)} text chunks"
         )
 
 
