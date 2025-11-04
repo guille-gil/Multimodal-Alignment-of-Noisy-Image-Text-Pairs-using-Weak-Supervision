@@ -9,22 +9,24 @@ This module implements the core PDF processing pipeline including:
 - Caption extraction and linking
 """
 
-import os
 import json
+import os
 import re
+import subprocess
+import tempfile
+from collections import Counter
+from io import BytesIO
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 import fitz  # PyMuPDF
+import numpy as np
 import pdfplumber
 import spacy
-from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
-from tqdm import tqdm
-import numpy as np
-from PIL import Image
-from dotenv import load_dotenv
 from docx import Document
-import tempfile
-import subprocess
-from collections import Counter
+from dotenv import load_dotenv
+from PIL import Image
+from tqdm import tqdm
 
 try:
     import pytesseract  # type: ignore
@@ -166,8 +168,6 @@ class PDFProcessor:
         except OSError:
             print(f"Warning: {model_name} not found. Trying to download...")
             try:
-                import subprocess
-
                 subprocess.run(
                     [os.sys.executable, "-m", "spacy", "download", model_name],
                     check=True,
@@ -492,9 +492,6 @@ class PDFProcessor:
 
                         # Get image dimensions
                         try:
-                            from PIL import Image
-                            from io import BytesIO
-
                             img_pil = Image.open(BytesIO(image_data))
                             width, height = img_pil.size
                         except:
