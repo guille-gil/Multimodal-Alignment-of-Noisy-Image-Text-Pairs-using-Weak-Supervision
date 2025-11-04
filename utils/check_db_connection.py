@@ -32,7 +32,7 @@ def check_connection():
     print()
 
     # Check environment variables
-    print("📋 Configuration:")
+    print(" Configuration:")
     print(f"   Host: {DB_HOST}")
     print(f"   Port: {DB_PORT}")
     print(f"   Database: {DB_NAME}")
@@ -45,7 +45,7 @@ def check_connection():
         return False
 
     # Test connection
-    print("🔌 Testing connection...")
+    print(" Testing connection...")
     try:
         import psycopg2
     except ImportError:
@@ -75,7 +75,7 @@ def check_connection():
         print()
 
         # Check pgvector extension
-        print("🔍 Checking pgvector extension...")
+        print(" Checking pgvector extension...")
         cur.execute(
             """
             SELECT EXISTS(
@@ -116,7 +116,7 @@ def check_connection():
         print()
 
         # List existing schemas (read-only)
-        print("📁 Existing Schemas:")
+        print(" Existing Schemas:")
         cur.execute(
             """
             SELECT schema_name 
