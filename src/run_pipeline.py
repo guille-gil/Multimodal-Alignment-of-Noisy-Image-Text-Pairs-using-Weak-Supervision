@@ -92,7 +92,7 @@ class PipelineOrchestrator:
 
             return required_schemas.issubset(set(schemas))
         except Exception as e:
-            print(f"⚠️  Could not check database setup: {e}")
+            print(f"  Could not check database setup: {e}")
             return False
 
     def check_embeddings_inserted(self, schema: str) -> bool:
@@ -131,7 +131,7 @@ class PipelineOrchestrator:
     def step_pdf_processing(self, force: bool = False):
         """Step 1: Process PDF documents."""
         if not force and self.check_pdf_processing():
-            print("✅ PDF processing already completed. Skipping...")
+            print(" PDF processing already completed. Skipping...")
             print(f"   Found {len(json.load(open(IMAGE_METADATA_FILE)))} images")
             print(f"   Found {len(json.load(open(TEXT_CHUNKS_FILE)))} text chunks")
             return
@@ -141,7 +141,7 @@ class PipelineOrchestrator:
         print("=" * 80)
 
         if not RAW_DIR.exists() or not any(RAW_DIR.glob("*")):
-            print(f"❌ No files found in {RAW_DIR}")
+            print(f" No files found in {RAW_DIR}")
             print("   Please add PDF or Word documents to process.")
             sys.exit(1)
 
@@ -151,15 +151,15 @@ class PipelineOrchestrator:
         )
 
         if result.returncode != 0:
-            print("❌ PDF processing failed!")
+            print(" PDF processing failed!")
             sys.exit(1)
 
-        print("✅ PDF processing completed!")
+        print(" PDF processing completed!")
 
     def step_lexical_filtering(self, force: bool = False, skip_prompt: bool = False):
         """Step 2: Filter lexical components (operator in the loop)."""
         if not force and self.check_lexical_filtering():
-            print("✅ Lexical components already filtered. Skipping...")
+            print(" Lexical components already filtered. Skipping...")
             return
 
         print("\n" + "=" * 80)
@@ -167,16 +167,14 @@ class PipelineOrchestrator:
         print("=" * 80)
 
         if not LEXICAL_COMPONENTS_FILE.exists():
-            print("❌ Lexical components not found. Run PDF processing first.")
+            print(" Lexical components not found. Run PDF processing first.")
             sys.exit(1)
 
         # Load and display current lexical components
         with open(LEXICAL_COMPONENTS_FILE, "r") as f:
             lexical_data = json.load(f)
 
-        print(
-            f"\n📊 Found {lexical_data['total_components']} unique lexical components"
-        )
+        print(f"\n Found {lexical_data['total_components']} unique lexical components")
         print("\nTop 20 most frequent terms:")
         for i, comp in enumerate(lexical_data["components"][:20], 1):
             print(f"  {i:2d}. {comp['term']:30s} (count: {comp['count']})")
@@ -196,37 +194,37 @@ class PipelineOrchestrator:
                 return
 
         # Run filtering script
-        print("\n🔍 Running lexical component filter...")
+        print("\n Running lexical component filter...")
         result = subprocess.run(
             [sys.executable, "src/filter_lexical_components.py"],
             capture_output=False,
         )
 
         if result.returncode != 0:
-            print("⚠️  Lexical filtering failed or was skipped.")
+            print("  Lexical filtering failed or was skipped.")
         else:
-            print("✅ Lexical filtering completed!")
+            print(" Lexical filtering completed!")
 
     def step_db_setup(self, force: bool = False):
         """Step 3: Set up database schemas."""
         if not force and self.check_db_setup():
-            print("✅ Database schemas already set up. Skipping...")
+            print(" Database schemas already set up. Skipping...")
             return
 
         print("\n" + "=" * 80)
         print("STEP 3: Database Setup")
         print("=" * 80)
 
-        print("🗄️  Setting up PostgreSQL schemas and tables...")
+        print("  Setting up PostgreSQL schemas and tables...")
         result = subprocess.run(
             [sys.executable, "src/setup_vector_db.py"], capture_output=False
         )
 
         if result.returncode != 0:
-            print("❌ Database setup failed!")
+            print(" Database setup failed!")
             sys.exit(1)
 
-        print("✅ Database setup completed!")
+        print(" Database setup completed!")
 
     def step_insert_embeddings(
         self, force: bool = False, schemas: Optional[list] = None
@@ -250,13 +248,13 @@ class PipelineOrchestrator:
             if force or not self.check_embeddings_inserted(schema):
                 schemas_to_process.append(schema)
             else:
-                print(f"✅ {schema} already has embeddings. Skipping...")
+                print(f" {schema} already has embeddings. Skipping...")
 
         if not schemas_to_process:
-            print("✅ All schemas already have embeddings. Skipping...")
+            print(" All schemas already have embeddings. Skipping...")
             return
 
-        print(f"📊 Inserting embeddings into: {', '.join(schemas_to_process)}")
+        print(f" Inserting embeddings into: {', '.join(schemas_to_process)}")
         print("   (This may take a while - first run will download CLIP model)")
 
         for schema in schemas_to_process:
@@ -267,12 +265,12 @@ class PipelineOrchestrator:
             )
 
             if result.returncode != 0:
-                print(f"❌ Failed to insert embeddings into {schema}")
+                print(f" Failed to insert embeddings into {schema}")
                 continue
 
-            print(f"   ✅ {schema} completed")
+            print(f"    {schema} completed")
 
-        print("\n✅ Embedding insertion completed!")
+        print("\n Embedding insertion completed!")
 
     def step_evaluation(self):
         """Step 5: Run evaluation."""
@@ -280,15 +278,15 @@ class PipelineOrchestrator:
         print("STEP 5: Evaluation")
         print("=" * 80)
 
-        print("📊 Computing metrics and generating visualizations...")
+        print(" Computing metrics and generating visualizations...")
         result = subprocess.run(
             [sys.executable, "src/evaluate_alignments.py"], capture_output=False
         )
 
         if result.returncode != 0:
-            print("⚠️  Evaluation completed with warnings")
+            print("  Evaluation completed with warnings")
         else:
-            print("✅ Evaluation completed!")
+            print(" Evaluation completed!")
             print("   Check evaluation_results/ directory for metrics and charts")
 
     def run(
@@ -310,41 +308,41 @@ class PipelineOrchestrator:
             if not skip_pdf:
                 self.step_pdf_processing(force=force)
             else:
-                print("⏭️  Skipping PDF processing")
+                print("⏭  Skipping PDF processing")
 
             # Step 2: Lexical Filtering
             if not skip_lexical:
                 self.step_lexical_filtering(force=force, skip_prompt=False)
             else:
-                print("⏭️  Skipping lexical filtering")
+                print("⏭  Skipping lexical filtering")
 
             # Step 3: Database Setup
             if not skip_db:
                 self.step_db_setup(force=force)
             else:
-                print("⏭️  Skipping database setup")
+                print("⏭  Skipping database setup")
 
             # Step 4: Embedding Insertion
             if not skip_embeddings:
                 self.step_insert_embeddings(force=force)
             else:
-                print("⏭️  Skipping embedding insertion")
+                print("⏭  Skipping embedding insertion")
 
             # Step 5: Evaluation
             if not skip_eval:
                 self.step_evaluation()
             else:
-                print("⏭️  Skipping evaluation")
+                print("⏭  Skipping evaluation")
 
             print("\n" + "=" * 80)
-            print("✅ PIPELINE COMPLETE!")
+            print(" PIPELINE COMPLETE!")
             print("=" * 80)
 
         except KeyboardInterrupt:
-            print("\n\n⚠️  Pipeline interrupted by user")
+            print("\n\n  Pipeline interrupted by user")
             sys.exit(1)
         except Exception as e:
-            print(f"\n\n❌ Pipeline failed: {e}")
+            print(f"\n\n Pipeline failed: {e}")
             sys.exit(1)
 
 

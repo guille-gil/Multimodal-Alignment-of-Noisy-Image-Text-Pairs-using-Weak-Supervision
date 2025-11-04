@@ -37,13 +37,53 @@ def setup_database():
             user=DB_USER,
             password=DB_PASSWORD,
         )
-        print("✅ Connection to PostgreSQL successful!")
+        print(" Connection to PostgreSQL successful!")
 
         cur = conn.cursor()
 
         # Enable pgvector extension
-        cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-        print("✅ pgvector extension enabled")
+        try:
+            # First check if extension is available
+            cur.execute("""
+                SELECT EXISTS(
+                    SELECT 1 FROM pg_available_extensions 
+                    WHERE name = 'vector'
+                );
+            """)
+            is_available = cur.fetchone()[0]
+
+            if not is_available:
+                print(
+                    " Error: pgvector extension is not installed on the PostgreSQL server"
+                )
+                print("   The extension must be installed by a database administrator.")
+                print("   For PostgreSQL 15, installation typically requires:")
+                print("   1. Installing pgvector package on the server")
+                print(
+                    "   2. Or compiling from source: https://github.com/pgvector/pgvector"
+                )
+                print("   Contact your database administrator to install pgvector.")
+                raise Exception("pgvector extension not available on server")
+
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+            print(" pgvector extension enabled")
+        except Exception as e:
+            if (
+                "not available" in str(e).lower()
+                or "could not open extension" in str(e).lower()
+            ):
+                print(
+                    "\n Error: pgvector extension is not installed on the PostgreSQL server"
+                )
+                print("   DETAIL: The extension files are missing from the server.")
+                print(
+                    "\n   SOLUTION: Contact your database administrator to install pgvector."
+                )
+                print("   Installation guide: https://github.com/pgvector/pgvector")
+                print("\n   You can check extension status with:")
+                print("   python3 utils/check_db_connection.py")
+                raise
+            raise
 
         # Define schemas
         schemas = ["vanilla_clip", "clip_lexical", "clip_positional", "clip_combined"]
@@ -130,7 +170,7 @@ def setup_database():
                 )
             except Exception as e:
                 # Fallback to ivfflat if HNSW not available
-                print(f"⚠️  HNSW not available, using ivfflat: {e}")
+                print(f"  HNSW not available, using ivfflat: {e}")
                 cur.execute(
                     sql.SQL("""
                     CREATE INDEX IF NOT EXISTS {schema}_images_embedding_idx 
@@ -164,18 +204,18 @@ def setup_database():
             """).format(schema=sql.Identifier(schema_name))
             )
 
-            print(f"✅ Schema '{schema_name}' created with tables and indexes")
+            print(f" Schema '{schema_name}' created with tables and indexes")
 
         conn.commit()
         cur.close()
         conn.close()
-        print("\n🔒 Database setup complete!")
+        print("\n Database setup complete!")
 
     except OperationalError as e:
-        print("❌ Could not connect to PostgreSQL:")
+        print(" Could not connect to PostgreSQL:")
         print(e)
     except Exception as e:
-        print(f"❌ Error setting up database: {e}")
+        print(f" Error setting up database: {e}")
         raise
 
 
