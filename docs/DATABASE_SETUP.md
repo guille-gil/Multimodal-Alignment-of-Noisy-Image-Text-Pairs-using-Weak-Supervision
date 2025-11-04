@@ -15,10 +15,10 @@ This guide explains how to set up the PostgreSQL vector database with pgvector f
 Add your database credentials to `.env`:
 
 ```bash
-DB_HOST=bachata.service.rug.nl
-DB_NAME=aixpert
-DB_USER=pnumber
-DB_PASSWORD=yourpassword
+DB_HOST=DB_HOST
+DB_NAME=
+DB_USER=
+DB_PASSWORD=
 DB_PORT=5432
 
 # CLIP model configuration
