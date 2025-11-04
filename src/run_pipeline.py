@@ -5,19 +5,20 @@ Executes the complete pipeline with smart step skipping and operator-in-the-loop
 support for lexical component filtering.
 """
 
-import sys
-import subprocess
-from pathlib import Path
+import argparse
 import json
+import subprocess
+import sys
+from pathlib import Path
 from typing import Optional
-import psycopg2
-from dotenv import load_dotenv
-import os
 
-load_dotenv()
+# Add parent directory to path for imports
+BASE_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(BASE_DIR))
+
+from config import get_db_connection
 
 # Paths (relative to project root)
-BASE_DIR = Path(__file__).parent.parent
 RAW_DIR = BASE_DIR / "data/raw/manuals"
 PROCESSED_DIR = BASE_DIR / "data/processed"
 IMAGES_DIR = PROCESSED_DIR / "images"
@@ -25,13 +26,6 @@ IMAGE_METADATA_FILE = PROCESSED_DIR / "image_metadata.json"
 TEXT_CHUNKS_FILE = PROCESSED_DIR / "text_chunks.json"
 LEXICAL_COMPONENTS_FILE = PROCESSED_DIR / "lexical_components.json"
 FILTERED_LEXICAL_FILE = PROCESSED_DIR / "filtered_lexical_components.json"
-
-# Database connection
-DB_HOST = os.getenv("DB_HOST", "bachata.service.rug.nl")
-DB_NAME = os.getenv("DB_NAME", "aixpert")
-DB_USER = os.getenv("DB_USER", "pnumber")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
 
 
 class PipelineOrchestrator:
@@ -62,13 +56,7 @@ class PipelineOrchestrator:
     def check_db_setup(self) -> bool:
         """Check if database schemas are set up."""
         try:
-            conn = psycopg2.connect(
-                host=DB_HOST,
-                port=DB_PORT,
-                dbname=DB_NAME,
-                user=DB_USER,
-                password=DB_PASSWORD,
-            )
+            conn = get_db_connection()
             cur = conn.cursor()
 
             # Check if all required schemas exist
@@ -98,13 +86,7 @@ class PipelineOrchestrator:
     def check_embeddings_inserted(self, schema: str) -> bool:
         """Check if embeddings have been inserted into a schema."""
         try:
-            conn = psycopg2.connect(
-                host=DB_HOST,
-                port=DB_PORT,
-                dbname=DB_NAME,
-                user=DB_USER,
-                password=DB_PASSWORD,
-            )
+            conn = get_db_connection()
             cur = conn.cursor()
 
             cur.execute(
@@ -348,8 +330,6 @@ class PipelineOrchestrator:
 
 def main():
     """Main entry point."""
-    import argparse
-
     parser = argparse.ArgumentParser(
         description="Run the complete multimodal alignment pipeline"
     )
