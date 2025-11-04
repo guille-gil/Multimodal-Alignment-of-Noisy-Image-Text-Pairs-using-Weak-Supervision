@@ -2,10 +2,10 @@
 Database setup script for pgvector-based CLIP embedding storage.
 
 Creates 4 schemas:
-- vanilla_clip: Standard CLIP embeddings
-- clip_lexical: CLIP + lexical component weak supervision
-- clip_positional: CLIP + positional (bbox) weak supervision
-- clip_combined: CLIP + both lexical and positional weak supervision
+- vanilla_clip: Pure CLIP embeddings (no weak supervision)
+- clip_local: CLIP + local proximity (bounding box proximity on same page)
+- clip_global: CLIP + global proximity (page distance across document)
+- clip_combined: CLIP + both local and global proximity
 """
 
 import sys
@@ -74,7 +74,7 @@ def setup_database():
             raise
 
         # Define schemas
-        schemas = ["vanilla_clip", "clip_lexical", "clip_positional", "clip_combined"]
+        schemas = ["vanilla_clip", "clip_local", "clip_global", "clip_combined"]
 
         for schema_name in schemas:
             # Create schema
@@ -127,7 +127,7 @@ def setup_database():
                     image_id VARCHAR(255) REFERENCES {}.images(image_id),
                     chunk_id VARCHAR(255) REFERENCES {}.text_chunks(chunk_id),
                     weak_score REAL,  -- Confidence score from weak supervision
-                    alignment_type VARCHAR(50),  -- 'lexical', 'positional', 'combined'
+                    alignment_type VARCHAR(50),  -- 'local', 'global', 'combined'
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(image_id, chunk_id, alignment_type)
                 );
