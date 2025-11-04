@@ -8,35 +8,23 @@ Creates 4 schemas:
 - clip_combined: CLIP + both lexical and positional weak supervision
 """
 
-import psycopg2
-from psycopg2 import sql, OperationalError
-from dotenv import load_dotenv
-import os
+import sys
+from pathlib import Path
 
-load_dotenv()
+from psycopg2 import OperationalError, sql
 
-# DB parameters from environment
-DB_HOST = os.getenv("DB_HOST", "bachata.service.rug.nl")
-DB_NAME = os.getenv("DB_NAME", "aixpert")
-DB_USER = os.getenv("DB_USER", "pnumber")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
+# Add parent directory to path for imports
+BASE_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(BASE_DIR))
 
-# CLIP embedding dimension (CLIP ViT-B/32 = 512, ViT-L/14 = 768)
-CLIP_DIM = int(os.getenv("CLIP_DIM", "512"))
+from config import CLIP_DIM, get_db_connection
 
 
 def setup_database():
     """Create schemas and tables for all 4 CLIP alignment strategies."""
     try:
         # Connect to PostgreSQL
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-        )
+        conn = get_db_connection()
         print(" Connection to PostgreSQL successful!")
 
         cur = conn.cursor()
