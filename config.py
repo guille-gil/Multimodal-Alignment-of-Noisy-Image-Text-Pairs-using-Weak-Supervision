@@ -26,7 +26,6 @@ IMAGES_DIR = PROCESSED_DIR / "images"
 # File paths
 IMAGE_METADATA_FILE = PROCESSED_DIR / "image_metadata.json"
 TEXT_CHUNKS_FILE = PROCESSED_DIR / "text_chunks.json"
-LEXICAL_COMPONENTS_FILE = PROCESSED_DIR / "lexical_components.json"
 
 # Processing parameters
 MIN_CHUNK_LENGTH = 10  # Minimum length for text chunks
@@ -106,14 +105,14 @@ def get_db_connection(**kwargs):
             from utils.manage_local_db import start_local_db, is_container_running
 
             if not is_container_running():
-                print("🔄 Auto-starting local database...")
+                print("Auto-starting local database...")
                 start_local_db()
         except ImportError:
             # utils may not be importable in all contexts, that's okay
             pass
         except Exception as e:
             # If auto-start fails, continue anyway - user might start manually
-            print(f"⚠️  Could not auto-start local database: {e}")
+            print(f"Warning: Could not auto-start local database: {e}")
 
         host = LOCAL_DB_HOST
         port = LOCAL_DB_PORT
