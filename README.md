@@ -1,27 +1,29 @@
-# Multimodal Alignment of Noisy Image-Text Pairs using Weak Supervision
+# Multimodal Alignment in Industrial Maintenance Manuals Using Weakly Supervision based on Positional Proximity
 
-A complete pipeline for processing technical manuals (PDF/Word), extracting multimodal data, computing CLIP embeddings, and evaluating alignment quality with weak supervision strategies.
+Industrial maintenance manuals combine text and images to describe procedures, yet their alignment is often weak or inconsistent. Most multimodal large language models assume perfectly paired data, limiting their applicability to such noisy domains. This work investigates weak supervision based on positional proximity of image-text to infer potential correspondences. By treating spatial and sequential closeness between textual segments and figures as a proxy for semantic relatedness, pseudo-pairs are generated without manual annotation. A lightweight adapter is then trained on these pairs to align embeddings from a pretrained CLIP model. Evaluation on document-style datasets demonstrates that proximity-based weak supervision improves retrieval precision and multimodal coherence compared to vanilla CLIP, providing a foundation for adapting MLLMs to low-alignment industrial corpora.
+
+## Citation 
+
+Gil de Avalle, G.; Maruster, M.; Emmanouilidis, C. (2025).
 
 ## Overview
 
 This system implements a full pipeline for:
-1. **Document Processing**: Extract images, text chunks, and lexical components from PDF/Word documents
-2. **Lexical Component Filtering**: Operator-in-the-loop filtering of vocabulary terms
-3. **Vector Database Setup**: PostgreSQL with pgvector for efficient similarity search
-4. **CLIP Embedding Computation**: OpenCLIP-based embeddings (fully local, open-source)
-5. **Weak Supervision**: Lexical and positional alignment strategies
-6. **Evaluation**: Comprehensive metrics and visualizations
+1. **Document Processing**: Extract images and text chunks from PDF/Word documents
+2. **Vector Database Setup**: PostgreSQL with pgvector for efficient similarity search
+3. **CLIP Embedding Computation**: OpenCLIP-based embeddings (fully local, open-source)
+4. **Weak Supervision**: Local and global proximity alignment strategies
+5. **Evaluation**: Comprehensive metrics and visualizations
 
 ## Features
 
 - **Multi-format Support**: PDF and Word documents (.pdf, .docx, .doc)
 - **Robust Image Extraction**: Native, vector, and fallback bounding box detection
 - **Intelligent Text Chunking**: Instruction-level granularity with bounding boxes
-- **Lexical Component Analysis**: Noun extraction with frequency tracking
 - **Weak Supervision Strategies**: 
-  - Lexical component alignment
-  - Positional (bounding box) alignment
-  - Combined alignment
+  - Local proximity (bounding box proximity on same page)
+  - Global proximity (page distance across document)
+  - Combined (both local and global)
 - **Vector Database**: PostgreSQL with pgvector for efficient similarity search
 - **Open-Source CLIP**: Fully local embedding computation (no data leakage)
 - **Comprehensive Evaluation**: Metrics and visualizations
@@ -82,10 +84,9 @@ python3 src/run_pipeline.py
 
 This will:
 1. Process PDF/Word documents in `data/raw/manuals/`
-2. Prompt you to filter lexical components
-3. Set up database (if needed)
-4. Compute and insert CLIP embeddings
-5. Run evaluation and generate metrics
+2. Set up database (if needed)
+3. Compute and insert CLIP embeddings
+4. Run evaluation and generate metrics
 
 ### Skip Steps (if already completed)
 
@@ -104,7 +105,7 @@ python3 src/run_pipeline.py --force
 
 ### Step 1: Document Processing
 
-Extracts images, text chunks, and lexical components from PDF/Word documents.
+Extracts images and text chunks from PDF/Word documents.
 
 ```bash
 python3 src/pdf_processor.py
@@ -114,32 +115,8 @@ python3 src/pdf_processor.py
 - `data/processed/images/`: Extracted images
 - `data/processed/image_metadata.json`: Image metadata with bounding boxes
 - `data/processed/text_chunks.json`: Text chunks with bounding boxes
-- `data/processed/lexical_components.json`: Vocabulary with frequencies
 
-### Step 2: Lexical Component Filtering
-
-Operator-in-the-loop step to filter non-relevant terms.
-
-1. Review extracted components:
-```bash
-python3 -c "import json; d=json.load(open('data/processed/lexical_components.json')); [print(f\"{i+1:3d}. {c['term']:30s} ({c['count']})\") for i,c in enumerate(d['components'][:30])]"
-```
-
-2. Edit `src/filter_lexical_components.py` and add terms to exclude:
-```python
-EXCLUDE_TERMS = {
-    "proce",      # Example: truncation
-    "visionplaa", # Example: truncation
-    # Add your terms here
-}
-```
-
-3. Run filtering:
-```bash
-python3 src/filter_lexical_components.py
-```
-
-### Step 3: Database Setup
+### Step 2: Database Setup
 
 Creates PostgreSQL schemas and tables with pgvector support.
 
@@ -148,12 +125,12 @@ python3 src/setup_vector_db.py
 ```
 
 Creates 4 schemas:
-- `vanilla_clip`: Standard CLIP embeddings
-- `clip_lexical`: CLIP + lexical weak supervision
-- `clip_positional`: CLIP + positional weak supervision
-- `clip_combined`: CLIP + both alignment strategies
+- `vanilla_clip`: Pure CLIP embeddings (no weak supervision)
+- `clip_local`: CLIP + local proximity (bounding box proximity on same page)
+- `clip_global`: CLIP + global proximity (page distance across document)
+- `clip_combined`: CLIP + both local and global proximity
 
-### Step 4: Embedding Insertion
+### Step 3: Embedding Insertion
 
 Computes CLIP embeddings using OpenCLIP and inserts into database.
 
@@ -206,11 +183,8 @@ Visualizations include:
 │       ├── images/            # Extracted images
 │       ├── image_metadata.json
 │       ├── text_chunks.json
-│       ├── lexical_components.json
-│       └── filtered_lexical_components.json
 ├── src/                        # Main source code
 │   ├── pdf_processor.py           # Document processing
-│   ├── filter_lexical_components.py  # Lexical filtering
 │   ├── setup_vector_db.py         # Database setup
 │   ├── insert_clip_embeddings.py  # Embedding computation & insertion
 │   ├── evaluate_alignments.py     # Evaluation
@@ -265,16 +239,18 @@ See `.env.example` for all available configuration options:
 
 ### Weak Supervision
 
-**Lexical Alignment:**
-- Computes overlap between text chunks and lexical components
-- Normalized score based on component frequency
-
-**Positional Alignment:**
+**Local Proximity:**
+- Computes bounding box proximity on the same page
 - Uses Intersection over Union (IoU) for overlapping bounding boxes
-- Distance-based scoring for non-overlapping elements
+- Distance-based scoring for non-overlapping elements on the same page
+
+**Global Proximity:**
+- Computes page distance across the entire document
+- Same page pairs get score of 1.0
+- Exponential decay with page distance
 
 **Combined Alignment:**
-- Average of lexical and positional scores
+- Average of local and global proximity scores
 
 ### Vector Database
 
