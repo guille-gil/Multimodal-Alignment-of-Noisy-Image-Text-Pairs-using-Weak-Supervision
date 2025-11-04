@@ -37,7 +37,7 @@ def setup_database():
             user=DB_USER,
             password=DB_PASSWORD,
         )
-        print("✅ Connection to PostgreSQL successful!")
+        print(" Connection to PostgreSQL successful!")
 
         cur = conn.cursor()
 
